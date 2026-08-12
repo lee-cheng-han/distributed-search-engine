@@ -1,9 +1,13 @@
 # Architecture
 
-The current implementation is the Phase 0/1 single-process correctness core. Documents enter an
+The current implementation is a single-process in-memory correctness core. Documents enter an
 `InMemoryIndex`, which analyzes each field and builds independent field/term dictionaries. Posting
 lists contain document IDs, term frequency, and positions. Document records retain fields,
 metadata, versions, deletion state, and analyzed field lengths.
+
+Queries pass through a lexer and recursive-descent parser into a typed AST. The executor performs
+merge-style Boolean operations, field-specific BM25 scoring, positional phrase checks, filters, and
+bounded deterministic top-K collection.
 
 Updates require a strictly newer version and replace all old postings. Deletes are versioned
 tombstones: the record remains, but all searchable postings are removed. Ordered maps and an

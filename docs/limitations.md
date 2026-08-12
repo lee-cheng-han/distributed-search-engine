@@ -1,9 +1,10 @@
 # Current limitations
 
-This repository currently implements the bootstrap and in-memory indexing slice only. It does not
-yet implement query parsing/execution, BM25, persistence, compression, segment merging,
+This repository currently implements an in-memory lexical search engine. It does not yet implement
+persistence, compression, segment merging,
 concurrency, sharding, replication, network APIs, metrics, Docker deployment, or measured
-benchmarks. The standard analyzer has documented byte-oriented UTF-8 behavior and no stemming.
+benchmarks. Range filtering is lexicographic and has no typed field schema. The standard analyzer has
+documented byte-oriented UTF-8 behavior and no stemming.
 
 The planned distributed design intentionally has no consensus protocol, automatic membership or
 shard rebalancing, distributed transactions, learning-to-rank, or Elasticsearch compatibility.

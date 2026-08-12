@@ -13,6 +13,9 @@ endif()
 add_library(dse
   src/analysis/analyzer.cpp
   src/index/in_memory_index.cpp
+  src/query/lexer.cpp
+  src/query/executor.cpp
+  src/query/parser.cpp
   src/ranking/bm25.cpp
   src/ranking/top_k.cpp
 )
@@ -48,6 +51,8 @@ if(DSE_BUILD_TESTS)
     tests/unit/analyzer_test.cpp
     tests/unit/bm25_test.cpp
     tests/unit/in_memory_index_test.cpp
+    tests/unit/query_executor_test.cpp
+    tests/unit/query_parser_test.cpp
     tests/unit/top_k_test.cpp
   )
   target_link_libraries(dse_unit_tests PRIVATE dse::dse GTest::gtest_main)

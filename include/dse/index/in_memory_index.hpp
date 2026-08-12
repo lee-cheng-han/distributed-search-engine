@@ -42,6 +42,7 @@ class InMemoryIndex {
   bool erase(const DocumentId& id, std::uint64_t version);
   [[nodiscard]] const TermEntry* lookup(std::string_view field, std::string_view term) const;
   [[nodiscard]] const DocumentRecord* document(const DocumentId& id) const;
+  [[nodiscard]] std::vector<DocumentId> live_document_ids() const;
   [[nodiscard]] std::size_t live_document_count() const noexcept;
   [[nodiscard]] FieldStatistics field_statistics(std::string_view field) const noexcept;
   [[nodiscard]] bool validate_invariants(std::string* reason = nullptr) const;

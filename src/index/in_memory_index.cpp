@@ -68,6 +68,15 @@ const DocumentRecord* InMemoryIndex::document(const DocumentId& id) const {
   return it == documents_.end() ? nullptr : &it->second;
 }
 
+std::vector<DocumentId> InMemoryIndex::live_document_ids() const {
+  std::vector<DocumentId> ids;
+  ids.reserve(live_document_count());
+  for (const auto& [id, record] : documents_) {
+    if (!record.document.deleted) ids.push_back(id);
+  }
+  return ids;
+}
+
 std::size_t InMemoryIndex::live_document_count() const noexcept {
   return static_cast<std::size_t>(std::ranges::count_if(
       documents_, [](const auto& item) { return !item.second.document.deleted; }));

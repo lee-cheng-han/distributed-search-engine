@@ -3,7 +3,9 @@
 An incremental C++23 implementation of a distributed lexical search engine built from first
 principles. The repository currently contains the tested foundation: configurable text
 analysis, strongly typed identifiers, versioned documents, field-specific inverted indexes,
-positional postings, document lengths, updates, and tombstone deletes.
+positional postings, document lengths, updates, tombstone deletes, BM25 ranking primitives, bounded
+top-K collection, a typed query parser, and Boolean, positional phrase, field, range, boost, and
+match-all execution.
 
 This is not a wrapper around an existing search engine. See [current limitations](docs/limitations.md)
 for an honest implementation boundary. The [implementation roadmap](docs/roadmap.md) defines the
@@ -34,5 +36,4 @@ installed as a CMake package, the build can use `/usr/src/googletest`.
 - stale document versions cannot overwrite newer state;
 - deleted documents have no searchable postings.
 
-The next planned commits add BM25 and bounded top-K collection, followed by the query
-lexer/parser/executor.
+The next planned commit adds a local indexing and search CLI over the tested in-memory engine.
