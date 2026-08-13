@@ -1,6 +1,5 @@
 #pragma once
 
-#include "dse/analysis/analyzer.hpp"
 #include "dse/index/in_memory_index.hpp"
 #include "dse/query/ast.hpp"
 #include "dse/ranking/bm25.hpp"
@@ -36,6 +35,8 @@ struct SearchResult {
 enum class ExecutionErrorCode {
   invalid_options,
   invalid_query_tree,
+  unknown_field,
+  incompatible_field_type,
   ranking_error,
   nesting_too_deep,
 };
@@ -47,15 +48,14 @@ struct ExecutionError {
 
 class QueryExecutor {
  public:
-  QueryExecutor(const index::InMemoryIndex& index, const analysis::Analyzer& analyzer,
-                ranking::BM25Parameters parameters = {});
+  explicit QueryExecutor(const index::InMemoryIndex& index,
+                         ranking::BM25Parameters parameters = {});
 
   [[nodiscard]] std::expected<SearchResult, ExecutionError> search(
       const QueryNode& query, const SearchOptions& options = {}) const;
 
  private:
   const index::InMemoryIndex& index_;
-  const analysis::Analyzer& analyzer_;
   std::expected<ranking::BM25Scorer, ranking::BM25Error> scorer_;
 };
 

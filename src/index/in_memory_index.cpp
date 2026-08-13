@@ -18,16 +18,53 @@ void InMemoryIndex::remove_postings(const DocumentId& id) {
   }
 }
 
-bool InMemoryIndex::put(Document document_value) {
-  if (document_value.id.value().empty()) return false;
+std::expected<void, IndexError> InMemoryIndex::put(Document document_value) {
+  if (document_value.id.value().empty()) {
+    return std::unexpected(
+        IndexError{IndexErrorCode::empty_document_id, "document ID must not be empty", {}});
+  }
   const auto existing = documents_.find(document_value.id);
-  if (existing != documents_.end() && document_value.version <= existing->second.document.version) return false;
+  if (existing != documents_.end() && document_value.version <= existing->second.document.version) {
+    return std::unexpected(IndexError{IndexErrorCode::stale_version,
+                                      "document version must be newer than visible version", {}});
+  }
+
+  for (const auto& [field, value] : document_value.fields) {
+    auto validation = schema_.validate_value(field, value);
+    if (!validation) {
+      return std::unexpected(IndexError{IndexErrorCode::schema_error,
+                                        validation.error().message, validation.error()});
+    }
+    const auto* definition = schema_.find(field);
+    if (!definition->indexed) {
+      SchemaError schema_error{SchemaErrorCode::field_not_indexed, field,
+                               "field is not configured for indexing"};
+      return std::unexpected(IndexError{IndexErrorCode::schema_error, schema_error.message,
+                                        std::move(schema_error)});
+    }
+  }
+  for (const auto& [field, value] : document_value.stored_metadata) {
+    auto validation = schema_.validate_value(field, value);
+    if (!validation) {
+      return std::unexpected(IndexError{IndexErrorCode::schema_error,
+                                        validation.error().message, validation.error()});
+    }
+    const auto* definition = schema_.find(field);
+    if (!definition->stored) {
+      SchemaError schema_error{SchemaErrorCode::field_not_stored, field,
+                               "field is not configured for stored metadata"};
+      return std::unexpected(IndexError{IndexErrorCode::schema_error, schema_error.message,
+                                        std::move(schema_error)});
+    }
+  }
 
   remove_postings(document_value.id);
   DocumentRecord record{std::move(document_value), {}};
   if (!record.document.deleted) {
     for (const auto& [field, text] : record.document.fields) {
-      const auto tokens = analyzer_.analyze(text);
+      const auto* definition = schema_.find(field);
+      if (definition == nullptr || !definition->indexed) continue;
+      const auto tokens = definition->analyzer->analyze(text);
       record.field_lengths[field] = static_cast<std::uint32_t>(tokens.size());
       std::map<std::string, std::vector<std::uint32_t>, std::less<>> positions;
       for (const auto& token : tokens) positions[token.term].push_back(token.position);
@@ -42,12 +79,15 @@ bool InMemoryIndex::put(Document document_value) {
     }
   }
   documents_.insert_or_assign(record.document.id, std::move(record));
-  return true;
+  return {};
 }
 
-bool InMemoryIndex::erase(const DocumentId& id, std::uint64_t version) {
+std::expected<void, IndexError> InMemoryIndex::erase(const DocumentId& id, std::uint64_t version) {
   const auto existing = documents_.find(id);
-  if (existing != documents_.end() && version <= existing->second.document.version) return false;
+  if (existing != documents_.end() && version <= existing->second.document.version) {
+    return std::unexpected(IndexError{IndexErrorCode::stale_version,
+                                      "delete version must be newer than visible version", {}});
+  }
   Document tombstone{.id = id,
                      .fields = {},
                      .stored_metadata = {},
@@ -121,7 +161,10 @@ bool InMemoryIndex::validate_invariants(std::string* reason) const {
     if (record.document.deleted && !record.field_lengths.empty()) return fail("tombstone has field lengths");
     if (!record.document.deleted) {
       for (const auto& [field, text] : record.document.fields) {
-        const auto expected = analyzer_.analyze(text).size();
+        const auto* definition = schema_.find(field);
+        if (definition == nullptr) return fail("document contains unknown field");
+        if (!definition->indexed) continue;
+        const auto expected = definition->analyzer->analyze(text).size();
         const auto it = record.field_lengths.find(field);
         if (it == record.field_lengths.end() || it->second != expected) return fail("field length mismatch");
       }

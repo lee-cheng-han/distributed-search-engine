@@ -4,16 +4,17 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <memory>
 #include <set>
 #include <string>
 
 namespace {
 
-dse::Document document(std::string id, std::string title, std::string body, std::string year,
+dse::Document document(std::string id, std::string title, std::string body, std::string timestamp,
                        std::uint64_t version = 1) {
   return {.id = dse::DocumentId(std::move(id)),
           .fields = {{"body", std::move(body)}, {"title", std::move(title)}},
-          .stored_metadata = {{"year", std::move(year)}},
+          .stored_metadata = {{"timestamp", std::move(timestamp)}},
           .version = version};
 }
 
@@ -35,14 +36,15 @@ dse::query::SearchResult search(const dse::query::QueryExecutor& executor, std::
 
 class QueryExecutorTest : public ::testing::Test {
  protected:
-  QueryExecutorTest() : index(analyzer), executor(index, analyzer) {
-    EXPECT_TRUE(index.put(document("a", "Distributed search engine", "reliable systems", "2024")));
-    EXPECT_TRUE(index.put(document("b", "Distributed fast search", "slow systems", "2025")));
-    EXPECT_TRUE(index.put(document("c", "GPU compute", "fast parallel search", "2026")));
-    EXPECT_TRUE(index.put(document("d", "CPU compute", "batch processing", "2023")));
+  QueryExecutorTest() : executor(index) {
+    EXPECT_TRUE(
+        index.put(document("a", "Distributed search engine", "reliable systems", "2024-01-01")));
+    EXPECT_TRUE(
+        index.put(document("b", "Distributed fast search", "slow systems", "2025-01-01")));
+    EXPECT_TRUE(index.put(document("c", "GPU compute", "fast parallel search", "2026-01-01")));
+    EXPECT_TRUE(index.put(document("d", "CPU compute", "batch processing", "2023-01-01")));
   }
 
-  dse::analysis::StandardAnalyzer analyzer;
   dse::index::InMemoryIndex index;
   dse::query::QueryExecutor executor;
 };
@@ -70,11 +72,18 @@ TEST_F(QueryExecutorTest, RequiresPhrasePositionsWithinOneField) {
 }
 
 TEST(QueryExecutor, PreservesAnalyzerPositionGapsInPhrases) {
-  const dse::analysis::StandardAnalyzer analyzer({"the"});
-  dse::index::InMemoryIndex index(analyzer);
-  ASSERT_TRUE(index.put(document("gap", "distributed the search", "", "2024")));
-  ASSERT_TRUE(index.put(document("adjacent", "distributed search", "", "2024")));
-  const dse::query::QueryExecutor executor(index, analyzer);
+  const auto analyzer =
+      std::make_shared<const dse::analysis::StandardAnalyzer>(
+          std::set<std::string, std::less<>>{"the"});
+  auto schema = dse::index::IndexSchema::create(
+      {{"title", dse::index::FieldType::text, true, true, 1.0, analyzer},
+       {"body", dse::index::FieldType::text, true, true, 1.0, analyzer},
+       {"timestamp", dse::index::FieldType::timestamp, false, true, 1.0, nullptr}});
+  ASSERT_TRUE(schema.has_value());
+  dse::index::InMemoryIndex index(std::move(*schema));
+  ASSERT_TRUE(index.put(document("gap", "distributed the search", "", "2024-01-01")));
+  ASSERT_TRUE(index.put(document("adjacent", "distributed search", "", "2024-01-01")));
+  const dse::query::QueryExecutor executor(index);
   const auto result = search(executor, "title:\"distributed the search\"");
   ASSERT_EQ(result.hits.size(), 1U);
   EXPECT_EQ(result.hits[0].document_id, dse::DocumentId("gap"));
@@ -92,14 +101,16 @@ TEST_F(QueryExecutorTest, RestrictsFieldedQueriesAndAppliesBoosts) {
 }
 
 TEST_F(QueryExecutorTest, AppliesInclusiveMetadataRangeFilters) {
-  const auto result = search(executor, "year:[2024 TO 2025]");
+  const auto result = search(executor, "timestamp:[2024-01-01 TO 2025-12-31]");
   EXPECT_EQ(result.total_hits, 2U);
   EXPECT_EQ(ids(result), (std::set<std::string>{"a", "b"}));
-  EXPECT_EQ(ids(search(executor, "year:[2026 TO *]")), (std::set<std::string>{"c"}));
+  EXPECT_EQ(ids(search(executor, "timestamp:[2026-01-01 TO *]")),
+            (std::set<std::string>{"c"}));
 }
 
 TEST_F(QueryExecutorTest, CombinesFiltersWithScoredQueries) {
-  const auto result = search(executor, "search AND year:[2025 TO 2026]");
+  const auto result =
+      search(executor, "search AND timestamp:[2025-01-01 TO 2026-12-31]");
   EXPECT_EQ(ids(result), (std::set<std::string>{"b", "c"}));
   for (const auto& hit : result.hits) EXPECT_GT(hit.score, 0.0);
 }

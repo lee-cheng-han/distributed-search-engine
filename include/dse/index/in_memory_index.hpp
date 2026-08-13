@@ -1,10 +1,12 @@
 #pragma once
 
-#include "dse/analysis/analyzer.hpp"
 #include "dse/document.hpp"
+#include "dse/index/schema.hpp"
 
 #include <cstdint>
+#include <expected>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,25 +35,36 @@ struct FieldStatistics {
   double average_length{};
 };
 
+enum class IndexErrorCode { empty_document_id, stale_version, schema_error };
+
+struct IndexError {
+  IndexErrorCode code;
+  std::string message;
+  std::optional<SchemaError> schema_error;
+};
+
 class InMemoryIndex {
  public:
-  explicit InMemoryIndex(const analysis::Analyzer& analyzer) : analyzer_(analyzer) {}
+  explicit InMemoryIndex(IndexSchema schema = IndexSchema::default_schema())
+      : schema_(std::move(schema)) {}
 
   // Higher versions replace older versions. Equal/older versions are rejected.
-  bool put(Document document);
-  bool erase(const DocumentId& id, std::uint64_t version);
+  [[nodiscard]] std::expected<void, IndexError> put(Document document);
+  [[nodiscard]] std::expected<void, IndexError> erase(const DocumentId& id,
+                                                       std::uint64_t version);
   [[nodiscard]] const TermEntry* lookup(std::string_view field, std::string_view term) const;
   [[nodiscard]] const DocumentRecord* document(const DocumentId& id) const;
   [[nodiscard]] std::vector<DocumentId> live_document_ids() const;
   [[nodiscard]] std::size_t live_document_count() const noexcept;
   [[nodiscard]] FieldStatistics field_statistics(std::string_view field) const noexcept;
+  [[nodiscard]] const IndexSchema& schema() const noexcept { return schema_; }
   [[nodiscard]] bool validate_invariants(std::string* reason = nullptr) const;
 
  private:
   using Dictionary = std::map<std::string, TermEntry, std::less<>>;
   void remove_postings(const DocumentId& id);
 
-  const analysis::Analyzer& analyzer_;
+  IndexSchema schema_;
   std::map<std::string, Dictionary, std::less<>> fields_;
   std::map<DocumentId, DocumentRecord> documents_;
 };

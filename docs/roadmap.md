@@ -116,6 +116,61 @@ bounds-checked. Compression is a versioned posting codec added only after this r
 correct. Readers reject unsupported major versions and corruption explicitly; compatibility across
 minor versions must be documented and covered by golden files.
 
+### Field schema and analyzers
+
+Every field has a declared type (`text`, `keyword`, `int64`, or `timestamp`), indexed/stored flags,
+an analyzer identity, and a default boost. Text fields use configured analyzers; keyword fields use
+exact analysis; typed values use validated doc values rather than token postings. Analyzer ownership
+must be explicit and safe—indexes and snapshots must not retain references to shorter-lived analyzer
+objects.
+
+The initial schema defines `title` and `body` as text, `tags` as keyword or an explicitly documented
+multi-value keyword field, and `timestamp` as a typed sortable value. Unknown fields and incompatible
+range operations fail during planning.
+
+### Transactional indexing
+
+Document mutation follows prepare-then-publish semantics. Validation and analysis produce an isolated
+`AnalyzedDocument`; only after all fields, limits, term references, statistics changes, and postings
+are ready may the old version be replaced. A rejected or failed update leaves the prior visible state
+unchanged. Mutations return `std::expected` with distinct empty-ID, stale-version, schema, limit,
+analysis, and invariant errors rather than a Boolean.
+
+### Resource limits
+
+Configuration bounds document bytes, field bytes, tokens per field, unique terms per document, term
+length, positions per posting, query bytes, lexeme count, AST nodes, phrase and range-bound bytes,
+nesting depth, top-K, and all queues/caches. Readers additionally bound file size, section counts,
+record lengths, offsets, and allocations. Limit failures are explicit and tested at, below, and above
+each boundary.
+
+### Query planning and semantics
+
+Parsing is syntactic. A separate immutable planner validates fields and types, analyzes query text
+once, expands default fields, normalizes Boolean expressions, defines repeated-term behavior, pushes
+filters down, and orders conjunctions by estimated cost. It emits a plan that distinguishes matching,
+filtering, position verification, and scoring.
+
+The language documentation defines implicit operators, pure-negative and standalone `NOT` behavior,
+filter score contribution, duplicate clauses, empty analyzer output, phrase gaps, boosts, reserved
+words, punctuation, Unicode whitespace, and escaping. A canonical query printer supports cache keys,
+safe query fingerprints, debugging, and parse/print/parse properties.
+
+### Score reproducibility
+
+Scoring specifies operation order, query-term frequency treatment, invalid floating-point behavior,
+and comparison tolerance across builds and nodes. Exact ties use external document ID ascending.
+Distributed scoring receives one immutable global statistics context and the same BM25 parameters and
+plan identity on every shard.
+
+### Consistency and routing epochs
+
+Shard maps and global-statistics snapshots carry epochs. Writes have idempotency keys, operation IDs,
+document versions, and an explicit acknowledgment mode. Replication records bind shard ID, sequence,
+operation identity, payload checksum, and mutation. Applying an identical operation twice is safe;
+conflicting content at one sequence is corruption. The documentation states split-brain and failover
+limitations without implying consensus.
+
 ## Commit plan
 
 Commits are ordered by dependency and sized around one coherent technical result. The text in each
@@ -151,8 +206,45 @@ scoring, and top-K collection. Compare optimized execution with a simple referen
 Expose document ingestion and query execution through a small CLI, include deterministic sample data,
 and add an end-to-end test covering term, Boolean, phrase, field, filter, and boosted queries.
 
+### `enforce field schemas and per-field analysis`
+
+Add typed field definitions, safe analyzer ownership, indexed/stored policy, keyword tags, typed
+timestamps, schema validation, and explicit failures for unknown fields and incompatible filters.
+
+### `assign compact internal document identifiers`
+
+Separate external string IDs from deterministic segment-local `uint32_t` IDs. Store postings by
+internal ID, retain bidirectional document mappings, and test stable ordering, mapping integrity,
+overflow, and insertion-order behavior.
+
+### `publish document mutations transactionally`
+
+Prepare analyzed documents and posting/statistic deltas before replacing visible state. Replace
+Boolean mutation results with explicit errors, maintain per-document term references for targeted
+removal, update field statistics incrementally, and prove failed updates preserve the previous state.
+
+### `plan typed queries before execution`
+
+Introduce a planner that analyzes once, validates fields and typed bounds, expands defaults,
+normalizes repeated terms and Boolean semantics, pushes filters down, orders conjunctions by document
+frequency, and emits an immutable executable plan. Add a canonical query printer and resource limits
+for query bytes, tokens, nodes, phrases, bounds, nesting, and top-K.
+
+### `verify optimized search against a reference evaluator`
+
+Build a deliberately simple set-based evaluator and seeded corpus/query generators. Differentially
+compare matches, scores within the documented tolerance, total hits, and ordering across Boolean,
+phrase, field, boost, filter, update, delete, duplicate-term, empty-analysis, and tie cases.
+
+### `fuzz query parsing planning and canonicalization`
+
+Add a sustained libFuzzer-compatible target, AST structural invariants, bounded-work assertions, and
+parse/print/parse properties. Cover punctuation, hyphens, reserved words as literals, Unicode
+whitespace, malformed escapes, exponent boosts, flat large queries, and excessive nesting.
+
 **Outcome check:** from a clean checkout, the CLI turns a deterministic corpus into correct ranked
-results, and the warning-clean correctness suite passes under ASan/UBSan.
+results. Mutations are transactional, schema/type errors are explicit, optimized results match the
+reference model, parser fuzzing is bounded, and the warning-clean suite passes under ASan/UBSan.
 
 ## The index survives change and restarts
 
@@ -161,11 +253,26 @@ results, and the warning-clean correctness suite passes under ASan/UBSan.
 Define and implement the initial fixed-width, little-endian, length-prefixed segment format with
 defensive readers, checksums, format versions, golden files, and malformed-input tests.
 
+The exact specification covers magic bytes, major/minor version, feature flags, endianness, header
+and record lengths, section offsets, counts, limits, checksum coverage, and compatibility rules.
+Readers use bounded cursors over byte spans and validate overflow, bounds, ordering, uniqueness,
+term-frequency/position agreement, mappings, and checksums before exposing a segment.
+
+### `store typed doc values and segment metadata`
+
+Persist typed timestamps and integers in columnar sorted value/document structures, exact keyword
+values, field statistics, external/internal ID mappings, analyzer/schema fingerprints, and segment
+resource accounting. Add inspect and verify APIs for segment contents.
+
 ### `publish index generations atomically`
 
 Add manifests, temporary segment construction, fsync and rename ordering, startup verification, and
 subprocess crash tests at every publication boundary. Recovery must expose the old or new generation,
 never a mixture.
+
+I/O is abstracted for deterministic failure of create, write, flush, file fsync, rename, directory
+fsync, and delete. Durability includes directory metadata where supported and documents platform
+limitations precisely.
 
 ### `support incremental updates and tombstones across segments`
 
@@ -182,10 +289,25 @@ publish atomically, and verify live results before and after merging—including
 Add versioned posting codecs, round-trip and malformed-stream properties, differential tests against
 the uncompressed reader, and measurements for size and decode throughput.
 
+### `stream query execution through posting iterators`
+
+Replace intermediate candidate-vector materialization with `next`/`advance` iterators for terms,
+conjunctions, disjunctions, exclusions, filters, and live documents. Separate matching from scoring,
+start phrase and conjunction work from the rarest posting source, reuse retained postings during
+phrase scoring, and avoid materializing match-all for exclusions.
+
 ### `add bounded concurrent search and generation-aware caching`
 
 Introduce bounded worker queues, immutable search snapshots, a byte-bounded LRU cache keyed by index
-generation, and concurrency tests under ASan/UBSan and TSan.
+generation, query plan/schema fingerprints, and scoring configuration. Add memory accounting and
+configurable document-count and byte-based flush thresholds. Exercise publication and reclamation
+under repeated ASan/UBSan and TSan stress.
+
+### `explain lexical scores and query decisions`
+
+Add a debug-only explain API containing field contributions, term IDF/TF, document and average field
+length, boosts, phrase verification, and filter decisions. Ensure it does not alter ordinary scoring
+or leak document/query contents through default logging.
 
 **Outcome check:** the CLI can persist, restart, update, delete, merge, compress, and concurrently
 search a corpus without changing results. Crash and corruption tests pass. This is the first
@@ -198,16 +320,26 @@ portfolio-ready release.
 Add stable hashing, shard ownership, a `ShardClient` interface, an in-process implementation, and
 tests proving that routing does not depend on process or standard-library hash behavior.
 
+Document and persist the hash algorithm ID, seed, shard count, and routing epoch. Requests with stale
+or incompatible routing epochs fail explicitly rather than silently reaching the wrong shard.
+
 ### `scatter searches with global BM25 statistics`
 
 Maintain global field statistics, query shards concurrently with absolute deadlines and cancellation
 checks, and merge global top-K results. Distributed scores and ordering must match the single-node
 reference for queries, ties, updates, and deletes.
 
+Define the global scoring context protocol: statistics/routing epoch, global live-document count and
+total length per field, global document frequency per field/term, BM25 parameters, schema fingerprint,
+and plan identity. Document why shard-local K is sufficient for global K under identical additive
+global scoring, and test that proof against the reference engine.
+
 ### `expose coordinator and shard HTTP APIs`
 
 Add transport adapters over tested in-process interfaces, structured boundary errors, remaining-time
-deadline propagation, bounded request queues, and explicit 429/503 overload responses.
+deadline propagation, bounded request queues, cancellation checks between expensive stages, write
+idempotency keys, and explicit 429/503/504 responses. Transport conformance tests must produce the same
+observable behavior as in-process clients.
 
 ### `deploy a reproducible multi-node search cluster`
 
@@ -225,15 +357,24 @@ Add primary/replica roles, monotonically increasing sequence numbers, synchronou
 `primary_and_replica` acknowledgment, persisted replication state, and rejection of gaps or
 out-of-order operations.
 
+Records include shard ID, sequence, operation ID, idempotency key, external document ID, document
+version, operation type, payload, and checksum. Replication state advances atomically with the durable
+mutation. Identical retries are idempotent and conflicting sequence content is corruption.
+
 ### `recover replicas from logs and verified snapshots`
 
 Replay retained operations, fall back to checksummed snapshots, catch up after snapshot transfer, and
 mark a replica healthy only once synchronized.
 
+Define byte/age retention, safe truncation, lag thresholds for snapshot fallback, and the exact
+snapshot/log handoff sequence. Test recovery across every cutoff and concurrent writes during catch-up.
+
 ### `route reads using node health and replica load`
 
 Add heartbeats, health-state transitions, round-robin and load-aware selection, draining, replication
-lag checks, and tests ensuring unhealthy nodes receive no new work.
+lag checks, routing epochs, promotion authority, and tests ensuring unhealthy or stale nodes receive no
+new work. Document that coordinator-controlled promotion is not a consensus protocol and state
+partition/split-brain limitations.
 
 ### `enforce deadlines backpressure and partial-result semantics`
 
@@ -241,10 +382,18 @@ Bound coordinator, query, indexing, and replication queues; stop expired work; d
 partial requests; report every failed shard; and add test-only RPC, disk, latency, and saturation
 faults.
 
+Use `steady_clock` deadlines internally and remaining durations at transport boundaries. Define retry
+safety and status mapping per queue: admission overload, shard saturation, unavailability, expiration,
+and partial success.
+
 ### `instrument distributed search operations`
 
 Add structured logs, bounded-cardinality Prometheus metrics, distributed traces, and dashboards that
 make request fan-out, cache behavior, replication lag, timeouts, and recovery observable.
+
+Measure queue wait separately from execution, planning from postings/scoring, and replication apply
+from acknowledgment wait. Stable dimensions exclude query text, document IDs, and request IDs. Trace
+sampling is configurable and controlled during benchmarks.
 
 **Outcome check:** replicated shards recover from supported failures, routing avoids unavailable
 nodes, missing work is explicit, and operational signals explain detection, failover, and recovery.
@@ -254,7 +403,10 @@ nodes, missing work is explicit, and operational signals explain detection, fail
 ### `evaluate lexical ranking on labeled queries`
 
 Implement Precision@K, Recall@K, MRR, and NDCG@K; verify the evaluators; and compare a TF-IDF baseline,
-default BM25, and tuned BM25 on a deterministic labeled dataset.
+default BM25, and tuned BM25 on deterministic synthetic data and at least one recognized public IR
+dataset such as Cranfield or a manageable BEIR subset. Separate development queries used for tuning
+from held-out evaluation queries, report paired uncertainty where practical, and include explain-based
+analysis of representative wins and failures.
 
 ### `benchmark indexing query and cache performance`
 
@@ -262,10 +414,19 @@ Measure throughput, latency percentiles, memory, index size, compression, and ca
 document counts and client concurrency. Record commit, compiler, flags, hardware, OS, corpus,
 configuration, and seed automatically.
 
+Begin with analysis, posting construction, update, phrase, no-hit, filter, match-all, and memory-per-
+document baselines. Later workloads include frequent/rare terms, AND/OR, phrases, filters, Zipfian
+cache traffic, multiple corpus sizes, and client counts. Preserve every raw run in machine-readable
+files and report warmup, repetitions, median, confidence interval, variation, and outlier policy.
+
 ### `measure scaling stragglers and failure recovery`
 
 Automate shard scaling, slow-replica selection, node loss, restart, corruption, and queue saturation
 experiments. Populate `results.md` only with actually measured values and explain non-linear behavior.
+
+Where useful, compare equivalent analyzer, BM25, field, hardware, warmup, and durability settings with
+a reference engine such as Lucene/OpenSearch as an external baseline—not as an implementation
+dependency or a requirement to match its performance.
 
 ### `validate adaptive routing under tail-latency stress`
 
@@ -280,6 +441,10 @@ why it does not.
 Provide a one-command local cluster, deterministic corpus generation, indexing and query walkthrough,
 failure injection, dashboard screenshots, and a concise technical deep dive. Validate the instructions
 from a clean checkout and archive machine-readable benchmark output alongside the report.
+
+The five-minute flow starts the cluster, indexes a deterministic corpus, runs a phrase query, shows
+fan-out tracing, kills a node, demonstrates replica routing, repeats the query, and watches replication
+lag return to zero.
 
 **Outcome check:** every relevance, performance, scaling, straggler, and failure claim can be
 regenerated from documented commands with enough metadata to interpret it.
@@ -304,6 +469,54 @@ A commit is ready only when:
 - performance-sensitive changes are compared with the previous implementation;
 - exact commands and outcomes are recorded without claiming unrun checks.
 
+Additional repository-wide gates:
+
+- GCC and Clang debug/release builds use CMake presets; ASan/UBSan, TSan, coverage, and benchmark
+  presets remain separate and dependency versions are pinned;
+- formatting is enforced in CI, clang-tidy/static-analysis findings are fixed or narrowly justified,
+  and coverage highlights untested parser, codec, manifest, recovery, and failure branches;
+- public binaries expose version, git commit, compiler, build type, format versions, and enabled
+  features through `--version` and health/benchmark metadata;
+- every externally observable error has a stable code, while CLIs optionally emit structured JSON and
+  maintain documented exit codes;
+- ingestion supports streaming escaped TSV and JSON Lines plus stdin, without loading an entire corpus
+  solely for parsing; executable failure tests cover missing files, malformed input/query, stale
+  versions, deletes, escaping, empty corpora, and no-hit searches.
+
+## Required test models
+
+- **Reference execution:** optimized search equals a deliberately simple evaluator.
+- **Mutation model:** generated PUT/UPDATE/DELETE/stale histories equal a highest-version map model.
+- **Persistence differential:** pre/post-restart and uncompressed/compressed results are equal.
+- **Merge differential:** visible documents, scores, and ordering are equal before and after merge.
+- **Distributed differential:** in-process and network shards equal the single-node reference.
+- **Crash matrix:** subprocess termination at every segment, manifest, merge, and replication durability
+  boundary exposes a valid old or new state, never partial state.
+- **Fault matrix:** disk, checksum, RPC, delay, node loss, replication lag, queue saturation, deadline,
+  and restart faults have explicit expected outcomes.
+- **Determinism:** insertion-order variants define and verify whether segment bytes, visible state, and
+  result ordering must be identical.
+
+## Required documentation and presentation
+
+Record architectural decisions separately for external/internal IDs, field schemas/analyzers, segment
+format, commit protocol, update/delete resolution, global BM25, replication acknowledgments, and
+overload/partial-result semantics. Add focused diagrams for segment layout, commit state transitions,
+query planning/execution, distributed request timing, and replica recovery.
+
+Evolve the CLI toward:
+
+```text
+dse index --input corpus.jsonl --index-dir index/
+dse search --index-dir index/ --query "..."
+dse inspect --index-dir index/
+dse verify --index-dir index/
+```
+
+The finished README leads with correctness counts, fuzz duration, crash coverage, corpus/hardware,
+indexing throughput, p50/p95/p99, compression, scaling efficiency, failure detection/failover/recovery,
+and direct commands to reproduce every claim.
+
 Small benchmarks begin with the local engine to detect regressions. Headline performance, scaling,
 and reliability results are published only after their corresponding behavior is stable.
 
@@ -315,6 +528,8 @@ The project is complete only when all of the following are true:
   exposes the behavior through logs, metrics, and traces;
 - single-node and distributed differential tests use the same deterministic corpora and prove equal
   results and scores, including ties, phrases, filters, updates, and deletes;
+- field schemas, analyzer lifetimes, external/internal ID mappings, transactional mutations, resource
+  limits, query semantics, score tolerance, and typed ranges are enforced rather than assumed;
 - parser and segment readers have sustained fuzz coverage, while codecs and merges have property and
   reference-model tests;
 - subprocess crash tests exercise every durable-publication boundary, and a documented fault matrix
@@ -330,6 +545,9 @@ The project is complete only when all of the following are true:
   measured compression/latency tradeoff;
 - format, consistency, recovery, ranking, deadline, overload, and partial-result semantics are precise
   enough for another engineer to predict behavior without reading the implementation;
+- query plans separate matching/filtering/scoring, disk execution uses advancing posting iterators,
+  phrase tests cover repeated terms and position limits, and debug score explanations agree with the
+  production scorer;
 - limitations remain explicit, and the README claims only behavior and measurements that the checked-in
   system can reproduce.
 

@@ -12,6 +12,8 @@ endif()
 
 add_library(dse
   src/analysis/analyzer.cpp
+  src/index/document_file.cpp
+  src/index/schema.cpp
   src/index/in_memory_index.cpp
   src/query/lexer.cpp
   src/query/executor.cpp
@@ -39,6 +41,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   endif()
 endif()
 
+add_executable(dse_index_cli apps/index_cli/main.cpp)
+target_link_libraries(dse_index_cli PRIVATE dse::dse)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(dse_index_cli PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+endif()
+
 if(DSE_BUILD_TESTS)
   include(CTest)
   find_package(GTest CONFIG QUIET)
@@ -50,13 +58,22 @@ if(DSE_BUILD_TESTS)
   add_executable(dse_unit_tests
     tests/unit/analyzer_test.cpp
     tests/unit/bm25_test.cpp
+    tests/unit/document_file_test.cpp
     tests/unit/in_memory_index_test.cpp
     tests/unit/query_executor_test.cpp
     tests/unit/query_parser_test.cpp
+    tests/unit/schema_test.cpp
     tests/unit/top_k_test.cpp
   )
   target_link_libraries(dse_unit_tests PRIVATE dse::dse GTest::gtest_main)
   include(GoogleTest)
   # PRE_TEST avoids executing sanitizer-instrumented binaries during the build.
   gtest_discover_tests(dse_unit_tests DISCOVERY_MODE PRE_TEST)
+  add_test(NAME IndexCli.EndToEnd
+    COMMAND dse_index_cli
+      --documents "${CMAKE_CURRENT_SOURCE_DIR}/datasets/synthetic/sample.tsv"
+      --query "title:\"distributed systems\" OR body:replication"
+      --top-k 3)
+  set_tests_properties(IndexCli.EndToEnd PROPERTIES
+    PASS_REGULAR_EXPRESSION "indexed_documents[^0-9]*5.*total_hits[^0-9]*2.*doc-001.*doc-003")
 endif()

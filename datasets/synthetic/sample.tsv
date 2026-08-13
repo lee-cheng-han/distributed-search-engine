@@ -1,0 +1,6 @@
+document_id	version	deleted	title	body	tags	timestamp
+doc-001	1	0	Distributed Systems	A practical introduction to consensus and replication.	systems search	2024-01-15
+doc-002	1	0	Search Engine Internals	Inverted indexes posting lists and BM25 ranking.	search indexing	2024-03-20
+doc-003	1	0	Reliable Storage	Replication checksums and crash-safe commits.	storage systems	2025-02-10
+doc-004	1	0	GPU Computing	Parallel kernels and memory bandwidth.	gpu compute	2025-06-05
+doc-005	1	0	Query Processing	Boolean queries phrase matching and top-k collection.	search queries	2026-01-01

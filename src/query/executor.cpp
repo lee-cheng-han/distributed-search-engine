@@ -112,9 +112,9 @@ bool positions_match(const std::vector<const index::Posting*>& postings,
 
 class Evaluator {
  public:
-  Evaluator(const index::InMemoryIndex& index, const analysis::Analyzer& analyzer,
-            const ranking::BM25Scorer& scorer, const SearchOptions& options)
-      : index_(index), analyzer_(analyzer), scorer_(scorer), options_(options) {}
+  Evaluator(const index::InMemoryIndex& index, const ranking::BM25Scorer& scorer,
+            const SearchOptions& options)
+      : index_(index), scorer_(scorer), options_(options) {}
 
   std::expected<Candidates, ExecutionError> evaluate(const QueryNode& query,
                                                       std::optional<std::string_view> field = {},
@@ -130,30 +130,58 @@ class Evaluator {
  private:
   std::expected<Candidates, ExecutionError> evaluate_node(
       const TermQuery& query, std::optional<std::string_view> field, std::size_t) const {
-    const auto tokens = analyzer_.analyze(query.term);
     Candidates result;
-    for (const auto& token : tokens) {
-      if (field) {
-        auto term_result = score_term(*field, token.term, field_boost(*field));
-        if (!term_result) return term_result;
-        result = unite(result, *term_result);
-      } else {
-        for (const auto& search_field : options_.default_fields) {
-          auto term_result = score_term(search_field.name, token.term, search_field.boost);
-          if (!term_result) return term_result;
-          result = unite(result, *term_result);
-        }
-      }
+    if (field) return score_text(*field, query.term, field_boost(*field));
+    for (const auto& search_field : options_.default_fields) {
+      auto term_result = score_text(search_field.name, query.term, search_field.boost);
+      if (!term_result) return term_result;
+      result = unite(result, *term_result);
     }
     return result;
   }
 
+  std::expected<Candidates, ExecutionError> score_text(std::string_view field,
+                                                       std::string_view text,
+                                                       double boost) const {
+    const auto* definition = index_.schema().find(field);
+    if (definition == nullptr) {
+      return std::unexpected(error(ExecutionErrorCode::unknown_field,
+                                   "query references unknown field: " + std::string(field)));
+    }
+    if (!definition->indexed || !definition->analyzer) {
+      return std::unexpected(error(ExecutionErrorCode::incompatible_field_type,
+                                   "field is not searchable as text: " + std::string(field)));
+    }
+    Candidates result;
+    for (const auto& token : definition->analyzer->analyze(text)) {
+      auto term_result = score_term(field, token.term, boost * definition->boost);
+      if (!term_result) return term_result;
+      result = unite(result, *term_result);
+    }
+    return result;
+  }
+
+  std::expected<Candidates, ExecutionError> validate_phrase_field(
+      std::string_view field, std::string_view phrase, double boost) const {
+    const auto* definition = index_.schema().find(field);
+    if (definition == nullptr) {
+      return std::unexpected(error(ExecutionErrorCode::unknown_field,
+                                   "query references unknown field: " + std::string(field)));
+    }
+    if (!definition->indexed || !definition->analyzer) {
+      return std::unexpected(error(ExecutionErrorCode::incompatible_field_type,
+                                   "field does not support phrase search: " + std::string(field)));
+    }
+    return score_phrase(field, phrase, boost * definition->boost, *definition->analyzer);
+  }
+
   std::expected<Candidates, ExecutionError> evaluate_node(
       const PhraseQuery& query, std::optional<std::string_view> field, std::size_t) const {
-    if (field) return score_phrase(*field, query.text, field_boost(*field));
+    if (field) return validate_phrase_field(*field, query.text, field_boost(*field));
     Candidates result;
     for (const auto& search_field : options_.default_fields) {
-      auto field_result = score_phrase(search_field.name, query.text, search_field.boost);
+      auto field_result =
+          validate_phrase_field(search_field.name, query.text, search_field.boost);
       if (!field_result) return field_result;
       result = unite(result, *field_result);
     }
@@ -196,6 +224,29 @@ class Evaluator {
 
   std::expected<Candidates, ExecutionError> evaluate_node(
       const RangeFilter& query, std::optional<std::string_view>, std::size_t) const {
+    const auto* definition = index_.schema().find(query.field);
+    if (definition == nullptr) {
+      return std::unexpected(error(ExecutionErrorCode::unknown_field,
+                                   "range references unknown field: " + query.field));
+    }
+    if (definition->type == index::FieldType::text) {
+      return std::unexpected(error(ExecutionErrorCode::incompatible_field_type,
+                                   "text fields do not support range filters"));
+    }
+    if (query.lower_bound != "*") {
+      auto validation = index_.schema().validate_value(query.field, query.lower_bound);
+      if (!validation) {
+        return std::unexpected(error(ExecutionErrorCode::incompatible_field_type,
+                                     validation.error().message));
+      }
+    }
+    if (query.upper_bound != "*") {
+      auto validation = index_.schema().validate_value(query.field, query.upper_bound);
+      if (!validation) {
+        return std::unexpected(error(ExecutionErrorCode::incompatible_field_type,
+                                     validation.error().message));
+      }
+    }
     Candidates result;
     for (const auto& id : index_.live_document_ids()) {
       const auto* record = index_.document(id);
@@ -292,8 +343,9 @@ class Evaluator {
 
   std::expected<Candidates, ExecutionError> score_phrase(std::string_view field,
                                                          std::string_view phrase,
-                                                         double boost) const {
-    const auto tokens = analyzer_.analyze(phrase);
+                                                         double boost,
+                                                         const analysis::Analyzer& analyzer) const {
+    const auto tokens = analyzer.analyze(phrase);
     if (tokens.empty()) return Candidates{};
     std::vector<const index::TermEntry*> entries;
     entries.reserve(tokens.size());
@@ -333,16 +385,15 @@ class Evaluator {
   }
 
   const index::InMemoryIndex& index_;
-  const analysis::Analyzer& analyzer_;
   const ranking::BM25Scorer& scorer_;
   const SearchOptions& options_;
 };
 
 }  // namespace
 
-QueryExecutor::QueryExecutor(const index::InMemoryIndex& index, const analysis::Analyzer& analyzer,
+QueryExecutor::QueryExecutor(const index::InMemoryIndex& index,
                              ranking::BM25Parameters parameters)
-    : index_(index), analyzer_(analyzer), scorer_(ranking::BM25Scorer::create(parameters)) {}
+    : index_(index), scorer_(ranking::BM25Scorer::create(parameters)) {}
 
 std::expected<SearchResult, ExecutionError> QueryExecutor::search(const QueryNode& query,
                                                                   const SearchOptions& options) const {
@@ -357,7 +408,7 @@ std::expected<SearchResult, ExecutionError> QueryExecutor::search(const QueryNod
     }
   }
 
-  auto candidates = Evaluator(index_, analyzer_, *scorer_, options).evaluate(query);
+  auto candidates = Evaluator(index_, *scorer_, options).evaluate(query);
   if (!candidates) return std::unexpected(candidates.error());
   ranking::TopKCollector collector(options.top_k);
   for (const auto& candidate : *candidates) {

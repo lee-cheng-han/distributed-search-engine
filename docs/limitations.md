@@ -1,6 +1,6 @@
 # Current limitations
 
-This repository currently implements an in-memory lexical search engine. It does not yet implement
+This repository currently implements an in-memory lexical search engine and local CLI. It does not yet implement
 persistence, compression, segment merging,
 concurrency, sharding, replication, network APIs, metrics, Docker deployment, or measured
 benchmarks. Range filtering is lexicographic and has no typed field schema. The standard analyzer has

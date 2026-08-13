@@ -3,7 +3,7 @@
 The in-memory executor evaluates the typed query AST over sorted field-specific posting lists. It
 returns explicit execution errors and never converts postings to hash sets.
 
-Term queries are analyzed with the same analyzer used for indexing. Unfielded terms search the
+Term queries are analyzed with the field's schema-owned analyzer used for indexing. Unfielded terms search the
 configured default fields and sum field-specific BM25 contributions when a document matches more than
 one field or term. Fielded expressions restrict all descendant term, phrase, and Boolean nodes to that
 field. Field boosts come from `SearchOptions`; AST boosts multiply the completed child score.
@@ -22,9 +22,10 @@ positions. A match requires every document position difference to equal the corr
 query position difference. Consequently, stop-word position gaps are preserved: removing a stop word
 does not make the surrounding terms adjacent.
 
-Range filters compare indexed field values first and stored metadata second. Bounds are inclusive and
-compared lexicographically in this version; `*` means unbounded. Numeric and date-aware schemas are
-future work, so callers must use consistently sortable encodings such as fixed-width ISO dates.
+Range filters compare indexed field values first and stored metadata second. Bounds are inclusive;
+`*` means unbounded. The schema rejects text ranges and validates integer or `YYYY-MM-DD` timestamp
+bounds. The current executor still scans and compares canonical stored encodings; columnar typed doc
+values arrive with persistent segments.
 
 After evaluation, a bounded min-heap collects top K in `O(M log K)` time and `O(K)` additional space
 for M candidates. `total_hits` is counted before truncation. Results sort by score descending, then

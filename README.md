@@ -5,7 +5,8 @@ principles. The repository currently contains the tested foundation: configurabl
 analysis, strongly typed identifiers, versioned documents, field-specific inverted indexes,
 positional postings, document lengths, updates, tombstone deletes, BM25 ranking primitives, bounded
 top-K collection, a typed query parser, and Boolean, positional phrase, field, range, boost, and
-match-all execution.
+match-all execution. A local CLI provides a complete ingestion-to-ranked-results path.
+Fields are schema-validated with owned per-field analyzers, exact keyword tags, and typed ISO dates.
 
 This is not a wrapper around an existing search engine. See [current limitations](docs/limitations.md)
 for an honest implementation boundary. The [implementation roadmap](docs/roadmap.md) defines the
@@ -25,6 +26,24 @@ installed as a CMake package, the build can use `/usr/src/googletest`.
 ./scripts/sanitize.sh
 ```
 
+## Local demo
+
+Index the deterministic sample corpus and run a query:
+
+```bash
+./scripts/index_sample.sh 'title:"distributed systems" OR body:replication'
+```
+
+The command prints one JSON object containing the number of live indexed documents, total matches,
+scores, document IDs, and stored fields. To use another escaped TSV corpus directly:
+
+```bash
+./build/dse_index_cli --documents path/to/documents.tsv --query 'search AND systems' --top-k 20
+```
+
+See [datasets/README.md](datasets/README.md) for the input schema and
+[query_language.md](docs/query_language.md) for syntax.
+
 ## Implemented invariants
 
 - every posting references a live document;
@@ -36,4 +55,6 @@ installed as a CMake package, the build can use `/usr/src/googletest`.
 - stale document versions cannot overwrite newer state;
 - deleted documents have no searchable postings.
 
-The next planned commit adds a local indexing and search CLI over the tested in-memory engine.
+Before immutable segments lock in the storage model, the next planned changes add field schemas and
+safe analyzer ownership, compact internal document IDs, transactional mutations, typed query
+planning, and reference-model differential tests. Persistent segments follow those prerequisites.

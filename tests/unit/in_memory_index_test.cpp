@@ -12,8 +12,7 @@ dse::Document doc(std::string id, std::uint64_t version, std::string title,
 }
 
 TEST(InMemoryIndex, BuildsFieldSpecificSortedPostingsAndStatistics) {
-  const dse::analysis::StandardAnalyzer analyzer;
-  dse::index::InMemoryIndex index(analyzer);
+  dse::index::InMemoryIndex index;
   ASSERT_TRUE(index.put(doc("b", 1, "Search systems", "search search")));
   ASSERT_TRUE(index.put(doc("a", 1, "Distributed search")));
 
@@ -31,8 +30,7 @@ TEST(InMemoryIndex, BuildsFieldSpecificSortedPostingsAndStatistics) {
 }
 
 TEST(InMemoryIndex, UpdateReplacesOldPostingsAndRejectsStaleVersions) {
-  const dse::analysis::StandardAnalyzer analyzer;
-  dse::index::InMemoryIndex index(analyzer);
+  dse::index::InMemoryIndex index;
   ASSERT_TRUE(index.put(doc("doc", 1, "old term")));
   EXPECT_FALSE(index.put(doc("doc", 1, "ignored")));
   ASSERT_TRUE(index.put(doc("doc", 2, "new term")));
@@ -42,8 +40,7 @@ TEST(InMemoryIndex, UpdateReplacesOldPostingsAndRejectsStaleVersions) {
 }
 
 TEST(InMemoryIndex, TombstoneRemovesDocumentFromPostings) {
-  const dse::analysis::StandardAnalyzer analyzer;
-  dse::index::InMemoryIndex index(analyzer);
+  dse::index::InMemoryIndex index;
   ASSERT_TRUE(index.put(doc("doc", 1, "visible")));
   ASSERT_TRUE(index.erase(dse::DocumentId("doc"), 2));
   EXPECT_EQ(index.live_document_count(), 0U);
@@ -55,8 +52,7 @@ TEST(InMemoryIndex, TombstoneRemovesDocumentFromPostings) {
 }
 
 TEST(InMemoryIndex, ComputesFieldSpecificLengthStatisticsForLiveDocuments) {
-  const dse::analysis::StandardAnalyzer analyzer;
-  dse::index::InMemoryIndex index(analyzer);
+  dse::index::InMemoryIndex index;
   ASSERT_TRUE(index.put(doc("a", 1, "one two", "one two three four")));
   ASSERT_TRUE(index.put(doc("b", 1, "one two three four", "")));
   ASSERT_TRUE(index.put(doc("c", 1, "deleted")));

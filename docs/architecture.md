@@ -9,6 +9,11 @@ Queries pass through a lexer and recursive-descent parser into a typed AST. The 
 merge-style Boolean operations, field-specific BM25 scoring, positional phrase checks, filters, and
 bounded deterministic top-K collection.
 
+The local `dse_index_cli` is the first complete application path. It validates and loads an escaped
+TSV corpus, builds the index, validates its invariants, parses one query, executes it, and writes a
+single JSON result to standard output. Input, query, and execution failures are sent to standard error
+with nonzero exit codes. The index exists only for that process lifetime.
+
 Updates require a strictly newer version and replace all old postings. Deletes are versioned
 tombstones: the record remains, but all searchable postings are removed. Ordered maps and an
 explicit posting sort make output deterministic. The index currently has single-writer semantics;
