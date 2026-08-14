@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <map>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -14,7 +15,7 @@
 namespace dse::index {
 
 struct Posting {
-  DocumentId document_id;
+  InternalDocumentId document_id;
   std::uint32_t term_frequency{};
   std::vector<std::uint32_t> positions;
 };
@@ -25,6 +26,7 @@ struct TermEntry {
 };
 
 struct DocumentRecord {
+  InternalDocumentId internal_id;
   Document document;
   std::map<std::string, std::uint32_t, std::less<>> field_lengths;
 };
@@ -35,7 +37,12 @@ struct FieldStatistics {
   double average_length{};
 };
 
-enum class IndexErrorCode { empty_document_id, stale_version, schema_error };
+enum class IndexErrorCode {
+  empty_document_id,
+  stale_version,
+  schema_error,
+  internal_id_exhausted,
+};
 
 struct IndexError {
   IndexErrorCode code;
@@ -45,8 +52,10 @@ struct IndexError {
 
 class InMemoryIndex {
  public:
-  explicit InMemoryIndex(IndexSchema schema = IndexSchema::default_schema())
-      : schema_(std::move(schema)) {}
+  explicit InMemoryIndex(
+      IndexSchema schema = IndexSchema::default_schema(),
+      std::uint32_t maximum_internal_id = std::numeric_limits<std::uint32_t>::max())
+      : schema_(std::move(schema)), maximum_internal_id_(maximum_internal_id) {}
 
   // Higher versions replace older versions. Equal/older versions are rejected.
   [[nodiscard]] std::expected<void, IndexError> put(Document document);
@@ -54,7 +63,10 @@ class InMemoryIndex {
                                                        std::uint64_t version);
   [[nodiscard]] const TermEntry* lookup(std::string_view field, std::string_view term) const;
   [[nodiscard]] const DocumentRecord* document(const DocumentId& id) const;
-  [[nodiscard]] std::vector<DocumentId> live_document_ids() const;
+  [[nodiscard]] const DocumentRecord* document(InternalDocumentId id) const;
+  [[nodiscard]] std::optional<InternalDocumentId> internal_id(const DocumentId& id) const noexcept;
+  [[nodiscard]] const DocumentId* external_id(InternalDocumentId id) const noexcept;
+  [[nodiscard]] std::vector<InternalDocumentId> live_document_ids() const;
   [[nodiscard]] std::size_t live_document_count() const noexcept;
   [[nodiscard]] FieldStatistics field_statistics(std::string_view field) const noexcept;
   [[nodiscard]] const IndexSchema& schema() const noexcept { return schema_; }
@@ -62,11 +74,14 @@ class InMemoryIndex {
 
  private:
   using Dictionary = std::map<std::string, TermEntry, std::less<>>;
-  void remove_postings(const DocumentId& id);
+  void remove_postings(InternalDocumentId id);
 
   IndexSchema schema_;
   std::map<std::string, Dictionary, std::less<>> fields_;
   std::map<DocumentId, DocumentRecord> documents_;
+  std::map<InternalDocumentId, DocumentId> external_ids_;
+  std::uint32_t next_internal_id_{1};
+  std::uint32_t maximum_internal_id_;
 };
 
 }  // namespace dse::index

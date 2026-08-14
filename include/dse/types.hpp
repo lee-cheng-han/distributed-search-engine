@@ -19,6 +19,7 @@ class StrongId {
 };
 
 using DocumentId = StrongId<struct DocumentIdTag, std::string>;
+using InternalDocumentId = StrongId<struct InternalDocumentIdTag, std::uint32_t>;
 using NodeId = StrongId<struct NodeIdTag, std::string>;
 using ShardId = StrongId<struct ShardIdTag, std::uint32_t>;
 using SegmentId = StrongId<struct SegmentIdTag, std::uint64_t>;

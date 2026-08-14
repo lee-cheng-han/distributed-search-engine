@@ -16,7 +16,7 @@ namespace {
 constexpr std::size_t kMaximumExecutionDepth = 256;
 
 struct Candidate {
-  DocumentId document_id;
+  InternalDocumentId document_id;
   double score{};
 };
 
@@ -86,7 +86,7 @@ Candidates exclude(const Candidates& universe, const Candidates& excluded) {
   return result;
 }
 
-const index::Posting* posting_for(const index::TermEntry& entry, const DocumentId& id) {
+const index::Posting* posting_for(const index::TermEntry& entry, const InternalDocumentId& id) {
   const auto posting = std::ranges::lower_bound(entry.postings, id, {}, &index::Posting::document_id);
   return posting == entry.postings.end() || posting->document_id != id ? nullptr : &*posting;
 }
@@ -411,8 +411,13 @@ std::expected<SearchResult, ExecutionError> QueryExecutor::search(const QueryNod
   auto candidates = Evaluator(index_, *scorer_, options).evaluate(query);
   if (!candidates) return std::unexpected(candidates.error());
   ranking::TopKCollector collector(options.top_k);
-  for (const auto& candidate : *candidates) {
-    if (!collector.collect({candidate.document_id, candidate.score})) {
+    for (const auto& candidate : *candidates) {
+    const auto* external_id = index_.external_id(candidate.document_id);
+    if (external_id == nullptr) {
+      return std::unexpected(
+          error(ExecutionErrorCode::invalid_query_tree, "candidate has no external document ID"));
+    }
+    if (!collector.collect({*external_id, candidate.score})) {
       return std::unexpected(
           error(ExecutionErrorCode::ranking_error, "query produced a non-finite score"));
     }

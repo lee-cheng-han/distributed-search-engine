@@ -2,7 +2,8 @@
 
 The current implementation is a single-process in-memory correctness core. Documents enter an
 `InMemoryIndex`, which analyzes each field and builds independent field/term dictionaries. Posting
-lists contain document IDs, term frequency, and positions. Document records retain fields,
+lists contain compact segment-local internal document IDs, term frequency, and positions. A checked
+bidirectional mapping resolves external client IDs at API boundaries. Document records retain fields,
 metadata, versions, deletion state, and analyzed field lengths.
 
 Queries pass through a lexer and recursive-descent parser into a typed AST. The executor performs

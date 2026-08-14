@@ -7,6 +7,8 @@ positional postings, document lengths, updates, tombstone deletes, BM25 ranking 
 top-K collection, a typed query parser, and Boolean, positional phrase, field, range, boost, and
 match-all execution. A local CLI provides a complete ingestion-to-ranked-results path.
 Fields are schema-validated with owned per-field analyzers, exact keyword tags, and typed ISO dates.
+Posting lists and execution use compact segment-local `uint32_t` document IDs while APIs preserve
+external string IDs and deterministic external-ID tie-breaking.
 
 This is not a wrapper around an existing search engine. See [current limitations](docs/limitations.md)
 for an honest implementation boundary. The [implementation roadmap](docs/roadmap.md) defines the
@@ -55,6 +57,6 @@ See [datasets/README.md](datasets/README.md) for the input schema and
 - stale document versions cannot overwrite newer state;
 - deleted documents have no searchable postings.
 
-Before immutable segments lock in the storage model, the next planned changes add field schemas and
-safe analyzer ownership, compact internal document IDs, transactional mutations, typed query
-planning, and reference-model differential tests. Persistent segments follow those prerequisites.
+Before immutable segments lock in the storage model, the next planned changes add transactional
+mutations, typed query planning, and reference-model differential tests. Persistent segments follow
+those prerequisites.

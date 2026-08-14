@@ -6,7 +6,7 @@
 
 namespace dse::index {
 
-void InMemoryIndex::remove_postings(const DocumentId& id) {
+void InMemoryIndex::remove_postings(InternalDocumentId id) {
   for (auto field_it = fields_.begin(); field_it != fields_.end();) {
     for (auto term_it = field_it->second.begin(); term_it != field_it->second.end();) {
       auto& postings = term_it->second.postings;
@@ -58,8 +58,19 @@ std::expected<void, IndexError> InMemoryIndex::put(Document document_value) {
     }
   }
 
-  remove_postings(document_value.id);
-  DocumentRecord record{std::move(document_value), {}};
+  InternalDocumentId internal_document_id;
+  if (existing == documents_.end()) {
+    if (next_internal_id_ == 0U || next_internal_id_ > maximum_internal_id_) {
+      return std::unexpected(IndexError{IndexErrorCode::internal_id_exhausted,
+                                        "segment-local document ID space is exhausted", {}});
+    }
+    internal_document_id = InternalDocumentId(next_internal_id_++);
+  } else {
+    internal_document_id = existing->second.internal_id;
+  }
+
+  remove_postings(internal_document_id);
+  DocumentRecord record{internal_document_id, std::move(document_value), {}};
   if (!record.document.deleted) {
     for (const auto& [field, text] : record.document.fields) {
       const auto* definition = schema_.find(field);
@@ -70,7 +81,7 @@ std::expected<void, IndexError> InMemoryIndex::put(Document document_value) {
       for (const auto& token : tokens) positions[token.term].push_back(token.position);
       for (auto& [term, term_positions] : positions) {
         auto& entry = fields_[field][term];
-        entry.postings.push_back({record.document.id,
+        entry.postings.push_back({record.internal_id,
                                   static_cast<std::uint32_t>(term_positions.size()),
                                   std::move(term_positions)});
         std::ranges::sort(entry.postings, {}, &Posting::document_id);
@@ -78,7 +89,9 @@ std::expected<void, IndexError> InMemoryIndex::put(Document document_value) {
       }
     }
   }
-  documents_.insert_or_assign(record.document.id, std::move(record));
+  const auto external_document_id = record.document.id;
+  external_ids_.insert_or_assign(internal_document_id, external_document_id);
+  documents_.insert_or_assign(external_document_id, std::move(record));
   return {};
 }
 
@@ -108,11 +121,28 @@ const DocumentRecord* InMemoryIndex::document(const DocumentId& id) const {
   return it == documents_.end() ? nullptr : &it->second;
 }
 
-std::vector<DocumentId> InMemoryIndex::live_document_ids() const {
-  std::vector<DocumentId> ids;
+const DocumentRecord* InMemoryIndex::document(InternalDocumentId id) const {
+  const auto* external = external_id(id);
+  return external == nullptr ? nullptr : document(*external);
+}
+
+std::optional<InternalDocumentId> InMemoryIndex::internal_id(const DocumentId& id) const noexcept {
+  const auto iterator = documents_.find(id);
+  return iterator == documents_.end() ? std::nullopt
+                                      : std::optional(iterator->second.internal_id);
+}
+
+const DocumentId* InMemoryIndex::external_id(InternalDocumentId id) const noexcept {
+  const auto iterator = external_ids_.find(id);
+  return iterator == external_ids_.end() ? nullptr : &iterator->second;
+}
+
+std::vector<InternalDocumentId> InMemoryIndex::live_document_ids() const {
+  std::vector<InternalDocumentId> ids;
   ids.reserve(live_document_count());
-  for (const auto& [id, record] : documents_) {
-    if (!record.document.deleted) ids.push_back(id);
+  for (const auto& [id, external] : external_ids_) {
+    const auto* record = document(external);
+    if (record != nullptr && !record->document.deleted) ids.push_back(id);
   }
   return ids;
 }
@@ -146,18 +176,22 @@ bool InMemoryIndex::validate_invariants(std::string* reason) const {
       if (entry.document_frequency != entry.postings.size()) return fail("document frequency mismatch");
       if (!std::ranges::is_sorted(entry.postings, {}, &Posting::document_id)) return fail("unsorted postings");
       for (const auto& posting : entry.postings) {
-        const auto doc_it = documents_.find(posting.document_id);
-        if (doc_it == documents_.end() || doc_it->second.document.deleted) return fail("posting references missing/deleted document");
+        const auto* record = document(posting.document_id);
+        if (record == nullptr || record->document.deleted) return fail("posting references missing/deleted document");
         if (posting.term_frequency != posting.positions.size()) return fail("term frequency mismatch");
         if (!std::ranges::is_sorted(posting.positions) ||
             std::ranges::adjacent_find(posting.positions) != posting.positions.end()) return fail("positions not strictly increasing");
-        if (!doc_it->second.field_lengths.contains(field)) return fail("field length missing");
+        if (!record->field_lengths.contains(field)) return fail("field length missing");
         if (term.empty()) return fail("empty term");
       }
     }
   }
   for (const auto& [id, record] : documents_) {
     if (id != record.document.id) return fail("document key mismatch");
+    const auto external = external_ids_.find(record.internal_id);
+    if (external == external_ids_.end() || external->second != id) {
+      return fail("document ID mapping mismatch");
+    }
     if (record.document.deleted && !record.field_lengths.empty()) return fail("tombstone has field lengths");
     if (!record.document.deleted) {
       for (const auto& [field, text] : record.document.fields) {
@@ -170,6 +204,7 @@ bool InMemoryIndex::validate_invariants(std::string* reason) const {
       }
     }
   }
+  if (external_ids_.size() != documents_.size()) return fail("document mapping size mismatch");
   return true;
 }
 
