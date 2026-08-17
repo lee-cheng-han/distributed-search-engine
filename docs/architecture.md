@@ -15,9 +15,11 @@ TSV corpus, builds the index, validates its invariants, parses one query, execut
 single JSON result to standard output. Input, query, and execution failures are sent to standard error
 with nonzero exit codes. The index exists only for that process lifetime.
 
-Updates require a strictly newer version and replace all old postings. Deletes are versioned
-tombstones: the record remains, but all searchable postings are removed. Ordered maps and an
-explicit posting sort make output deterministic. The index currently has single-writer semantics;
+Updates require a strictly newer version and use prepare-then-publish replacement. Each document
+records its field/term references, so old postings are removed without scanning the full dictionary;
+field counts and total lengths are updated incrementally. Deletes are versioned tombstones: the record
+remains, but all searchable postings are removed. Ordered maps and an explicit posting sort make
+output deterministic. The index currently has single-writer semantics;
 immutable snapshots and concurrent publication arrive with persistent segments.
 
 The intended dependency direction is analysis and data-model primitives into indexing, followed

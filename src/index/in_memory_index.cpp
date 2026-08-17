@@ -1,22 +1,11 @@
 #include "dse/index/in_memory_index.hpp"
 
 #include <algorithm>
+#include <exception>
 #include <limits>
 #include <utility>
 
 namespace dse::index {
-
-void InMemoryIndex::remove_postings(InternalDocumentId id) {
-  for (auto field_it = fields_.begin(); field_it != fields_.end();) {
-    for (auto term_it = field_it->second.begin(); term_it != field_it->second.end();) {
-      auto& postings = term_it->second.postings;
-      std::erase_if(postings, [&](const Posting& posting) { return posting.document_id == id; });
-      term_it->second.document_frequency = static_cast<std::uint32_t>(postings.size());
-      if (postings.empty()) term_it = field_it->second.erase(term_it); else ++term_it;
-    }
-    if (field_it->second.empty()) field_it = fields_.erase(field_it); else ++field_it;
-  }
-}
 
 std::expected<void, IndexError> InMemoryIndex::put(Document document_value) {
   if (document_value.id.value().empty()) {
@@ -58,29 +47,89 @@ std::expected<void, IndexError> InMemoryIndex::put(Document document_value) {
     }
   }
 
+  const bool is_new_document = existing == documents_.end();
   InternalDocumentId internal_document_id;
-  if (existing == documents_.end()) {
+  if (is_new_document) {
     if (next_internal_id_ == 0U || next_internal_id_ > maximum_internal_id_) {
       return std::unexpected(IndexError{IndexErrorCode::internal_id_exhausted,
                                         "segment-local document ID space is exhausted", {}});
     }
-    internal_document_id = InternalDocumentId(next_internal_id_++);
+    internal_document_id = InternalDocumentId(next_internal_id_);
   } else {
     internal_document_id = existing->second.internal_id;
   }
 
-  remove_postings(internal_document_id);
-  DocumentRecord record{internal_document_id, std::move(document_value), {}};
+  using PreparedPostings =
+      std::map<std::string,
+               std::map<std::string, std::vector<std::uint32_t>, std::less<>>, std::less<>>;
+  PreparedPostings prepared_postings;
+  DocumentRecord record{internal_document_id, std::move(document_value), {}, {}};
   if (!record.document.deleted) {
-    for (const auto& [field, text] : record.document.fields) {
-      const auto* definition = schema_.find(field);
-      if (definition == nullptr || !definition->indexed) continue;
-      const auto tokens = definition->analyzer->analyze(text);
-      record.field_lengths[field] = static_cast<std::uint32_t>(tokens.size());
-      std::map<std::string, std::vector<std::uint32_t>, std::less<>> positions;
-      for (const auto& token : tokens) positions[token.term].push_back(token.position);
+    try {
+      for (const auto& [field, text] : record.document.fields) {
+        const auto* definition = schema_.find(field);
+        if (definition == nullptr || !definition->indexed) continue;
+        const auto tokens = definition->analyzer->analyze(text);
+        if (tokens.size() > std::numeric_limits<std::uint32_t>::max()) {
+          return std::unexpected(IndexError{IndexErrorCode::field_length_overflow,
+                                            "analyzed field length exceeds uint32 range", {}});
+        }
+        record.field_lengths[field] = static_cast<std::uint32_t>(tokens.size());
+        auto& positions = prepared_postings[field];
+        for (const auto& token : tokens) positions[token.term].push_back(token.position);
+        auto& terms = record.indexed_terms[field];
+        terms.reserve(positions.size());
+        for (const auto& [term, term_positions] : positions) {
+          (void)term_positions;
+          terms.push_back(term);
+        }
+      }
+    } catch (const std::exception& exception) {
+      return std::unexpected(IndexError{IndexErrorCode::analysis_failed,
+                                        "document analysis failed: " +
+                                            std::string(exception.what()),
+                                        {}});
+    }
+  }
+
+  // Stage a complete replacement and publish with noexcept swaps. This is intentionally
+  // correctness-first; later immutable builders make publication cheap without weakening semantics.
+  auto staged_fields = fields_;
+  auto staged_documents = documents_;
+  auto staged_external_ids = external_ids_;
+  auto staged_statistics = field_statistics_;
+
+  if (existing != documents_.end() && !existing->second.document.deleted) {
+    for (const auto& [field, length] : existing->second.field_lengths) {
+      auto statistic = staged_statistics.find(field);
+      if (statistic != staged_statistics.end()) {
+        --statistic->second.document_count;
+        statistic->second.total_length -= length;
+        if (statistic->second.document_count == 0U) staged_statistics.erase(statistic);
+      }
+    }
+    for (const auto& [field, terms] : existing->second.indexed_terms) {
+      auto field_iterator = staged_fields.find(field);
+      if (field_iterator == staged_fields.end()) continue;
+      for (const auto& term : terms) {
+        auto term_iterator = field_iterator->second.find(term);
+        if (term_iterator == field_iterator->second.end()) continue;
+        auto& postings = term_iterator->second.postings;
+        std::erase_if(postings, [&](const Posting& posting) {
+          return posting.document_id == internal_document_id;
+        });
+        term_iterator->second.document_frequency =
+            static_cast<std::uint32_t>(postings.size());
+        if (postings.empty()) field_iterator->second.erase(term_iterator);
+      }
+      if (field_iterator->second.empty()) staged_fields.erase(field_iterator);
+    }
+  }
+
+  if (!record.document.deleted) {
+    for (auto& [field, positions] : prepared_postings) {
       for (auto& [term, term_positions] : positions) {
-        auto& entry = fields_[field][term];
+        auto& entry = staged_fields[field][term];
         entry.postings.push_back({record.internal_id,
                                   static_cast<std::uint32_t>(term_positions.size()),
                                   std::move(term_positions)});
@@ -88,10 +137,21 @@ std::expected<void, IndexError> InMemoryIndex::put(Document document_value) {
         entry.document_frequency = static_cast<std::uint32_t>(entry.postings.size());
       }
     }
+    for (const auto& [field, length] : record.field_lengths) {
+      auto& statistic = staged_statistics[field];
+      ++statistic.document_count;
+      statistic.total_length += length;
+    }
   }
   const auto external_document_id = record.document.id;
-  external_ids_.insert_or_assign(internal_document_id, external_document_id);
-  documents_.insert_or_assign(external_document_id, std::move(record));
+  staged_external_ids.insert_or_assign(internal_document_id, external_document_id);
+  staged_documents.insert_or_assign(external_document_id, std::move(record));
+
+  fields_.swap(staged_fields);
+  documents_.swap(staged_documents);
+  external_ids_.swap(staged_external_ids);
+  field_statistics_.swap(staged_statistics);
+  if (is_new_document) ++next_internal_id_;
   return {};
 }
 
@@ -153,24 +213,17 @@ std::size_t InMemoryIndex::live_document_count() const noexcept {
 }
 
 FieldStatistics InMemoryIndex::field_statistics(std::string_view field) const noexcept {
-  FieldStatistics statistics;
-  for (const auto& [id, record] : documents_) {
-    (void)id;
-    if (record.document.deleted) continue;
-    const auto length = record.field_lengths.find(field);
-    if (length == record.field_lengths.end()) continue;
-    ++statistics.document_count;
-    statistics.total_length += length->second;
-  }
-  if (statistics.document_count != 0U) {
-    statistics.average_length = static_cast<double>(statistics.total_length) /
-                                static_cast<double>(statistics.document_count);
-  }
-  return statistics;
+  const auto statistic = field_statistics_.find(field);
+  if (statistic == field_statistics_.end()) return {};
+  return {.document_count = statistic->second.document_count,
+          .total_length = statistic->second.total_length,
+          .average_length = static_cast<double>(statistic->second.total_length) /
+                            static_cast<double>(statistic->second.document_count)};
 }
 
 bool InMemoryIndex::validate_invariants(std::string* reason) const {
   const auto fail = [&](std::string value) { if (reason) *reason = std::move(value); return false; };
+  std::map<std::string, FieldAccumulator, std::less<>> expected_statistics;
   for (const auto& [field, dictionary] : fields_) {
     for (const auto& [term, entry] : dictionary) {
       if (entry.document_frequency != entry.postings.size()) return fail("document frequency mismatch");
@@ -192,7 +245,10 @@ bool InMemoryIndex::validate_invariants(std::string* reason) const {
     if (external == external_ids_.end() || external->second != id) {
       return fail("document ID mapping mismatch");
     }
-    if (record.document.deleted && !record.field_lengths.empty()) return fail("tombstone has field lengths");
+    if (record.document.deleted &&
+        (!record.field_lengths.empty() || !record.indexed_terms.empty())) {
+      return fail("tombstone has analyzed field state");
+    }
     if (!record.document.deleted) {
       for (const auto& [field, text] : record.document.fields) {
         const auto* definition = schema_.find(field);
@@ -201,10 +257,39 @@ bool InMemoryIndex::validate_invariants(std::string* reason) const {
         const auto expected = definition->analyzer->analyze(text).size();
         const auto it = record.field_lengths.find(field);
         if (it == record.field_lengths.end() || it->second != expected) return fail("field length mismatch");
+        auto& statistic = expected_statistics[field];
+        ++statistic.document_count;
+        statistic.total_length += it->second;
+        const auto indexed_terms = record.indexed_terms.find(field);
+        if (indexed_terms == record.indexed_terms.end() ||
+            !std::ranges::is_sorted(indexed_terms->second) ||
+            std::ranges::adjacent_find(indexed_terms->second) != indexed_terms->second.end()) {
+          return fail("document term references are missing, unsorted, or duplicated");
+        }
+        for (const auto& term : indexed_terms->second) {
+          const auto* entry = lookup(field, term);
+          if (entry == nullptr) return fail("document term reference is missing from dictionary");
+          const auto posting = std::ranges::lower_bound(entry->postings, record.internal_id, {},
+                                                        &Posting::document_id);
+          if (posting == entry->postings.end() || posting->document_id != record.internal_id) {
+            return fail("document term reference is missing its posting");
+          }
+        }
       }
     }
   }
   if (external_ids_.size() != documents_.size()) return fail("document mapping size mismatch");
+  if (expected_statistics.size() != field_statistics_.size()) {
+    return fail("field statistics size mismatch");
+  }
+  for (const auto& [field, expected] : expected_statistics) {
+    const auto actual = field_statistics_.find(field);
+    if (actual == field_statistics_.end() ||
+        actual->second.document_count != expected.document_count ||
+        actual->second.total_length != expected.total_length) {
+      return fail("field statistics mismatch");
+    }
+  }
   return true;
 }
 

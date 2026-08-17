@@ -2,6 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <memory>
+#include <stdexcept>
+
 namespace {
 
 dse::Document doc(std::string id, std::uint64_t version, std::string title,
@@ -116,6 +119,62 @@ TEST(InMemoryIndex, ReportsInternalIdExhaustionWithoutChangingVisibleState) {
 
   ASSERT_TRUE(index.put(doc("a", 2, "updated")));
   EXPECT_EQ(index.internal_id(dse::DocumentId("a"))->value(), 1U);
+  EXPECT_TRUE(index.validate_invariants());
+}
+
+class FailingAnalyzer final : public dse::analysis::Analyzer {
+ public:
+  [[nodiscard]] std::vector<dse::analysis::Token> analyze(
+      std::string_view text) const override {
+    if (text == "fail-analysis") throw std::runtime_error("injected analyzer failure");
+    if (text.empty()) return {};
+    return {{std::string(text), 0, 0, static_cast<std::uint32_t>(text.size())}};
+  }
+};
+
+TEST(InMemoryIndex, AnalysisFailurePreservesPreviousDocumentAndStatistics) {
+  const auto analyzer = std::make_shared<const FailingAnalyzer>();
+  auto schema = dse::index::IndexSchema::create(
+      {{"title", dse::index::FieldType::text, true, true, 1.0, analyzer}});
+  ASSERT_TRUE(schema.has_value());
+  dse::index::InMemoryIndex index(std::move(*schema));
+  ASSERT_TRUE(index.put({.id = dse::DocumentId("doc"),
+                         .fields = {{"title", "visible"}},
+                         .version = 1}));
+  const auto original_id = index.internal_id(dse::DocumentId("doc"));
+  const auto original_statistics = index.field_statistics("title");
+
+  const auto failed = index.put({.id = dse::DocumentId("doc"),
+                                 .fields = {{"title", "fail-analysis"}},
+                                 .version = 2});
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code, dse::index::IndexErrorCode::analysis_failed);
+  EXPECT_EQ(index.internal_id(dse::DocumentId("doc")), original_id);
+  EXPECT_NE(index.lookup("title", "visible"), nullptr);
+  EXPECT_EQ(index.lookup("title", "fail-analysis"), nullptr);
+  EXPECT_EQ(index.document(dse::DocumentId("doc"))->document.version, 1U);
+  EXPECT_EQ(index.field_statistics("title").document_count,
+            original_statistics.document_count);
+  EXPECT_EQ(index.field_statistics("title").total_length, original_statistics.total_length);
+  EXPECT_TRUE(index.validate_invariants());
+}
+
+TEST(InMemoryIndex, MaintainsStatisticsAcrossUpdatesAndTombstones) {
+  dse::index::InMemoryIndex index;
+  ASSERT_TRUE(index.put(doc("a", 1, "one two")));
+  ASSERT_TRUE(index.put(doc("b", 1, "one two three four")));
+  EXPECT_EQ(index.field_statistics("title").total_length, 6U);
+  EXPECT_DOUBLE_EQ(index.field_statistics("title").average_length, 3.0);
+
+  ASSERT_TRUE(index.put(doc("a", 2, "one two three")));
+  EXPECT_EQ(index.field_statistics("title").document_count, 2U);
+  EXPECT_EQ(index.field_statistics("title").total_length, 7U);
+  EXPECT_DOUBLE_EQ(index.field_statistics("title").average_length, 3.5);
+
+  ASSERT_TRUE(index.erase(dse::DocumentId("b"), 2));
+  EXPECT_EQ(index.field_statistics("title").document_count, 1U);
+  EXPECT_EQ(index.field_statistics("title").total_length, 3U);
+  EXPECT_DOUBLE_EQ(index.field_statistics("title").average_length, 3.0);
   EXPECT_TRUE(index.validate_invariants());
 }
 

@@ -29,6 +29,7 @@ struct DocumentRecord {
   InternalDocumentId internal_id;
   Document document;
   std::map<std::string, std::uint32_t, std::less<>> field_lengths;
+  std::map<std::string, std::vector<std::string>, std::less<>> indexed_terms;
 };
 
 struct FieldStatistics {
@@ -42,6 +43,8 @@ enum class IndexErrorCode {
   stale_version,
   schema_error,
   internal_id_exhausted,
+  analysis_failed,
+  field_length_overflow,
 };
 
 struct IndexError {
@@ -74,12 +77,16 @@ class InMemoryIndex {
 
  private:
   using Dictionary = std::map<std::string, TermEntry, std::less<>>;
-  void remove_postings(InternalDocumentId id);
+  struct FieldAccumulator {
+    std::size_t document_count{};
+    std::uint64_t total_length{};
+  };
 
   IndexSchema schema_;
   std::map<std::string, Dictionary, std::less<>> fields_;
   std::map<DocumentId, DocumentRecord> documents_;
   std::map<InternalDocumentId, DocumentId> external_ids_;
+  std::map<std::string, FieldAccumulator, std::less<>> field_statistics_;
   std::uint32_t next_internal_id_{1};
   std::uint32_t maximum_internal_id_;
 };
