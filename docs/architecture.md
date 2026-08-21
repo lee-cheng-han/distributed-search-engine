@@ -6,9 +6,11 @@ lists contain compact segment-local internal document IDs, term frequency, and p
 bidirectional mapping resolves external client IDs at API boundaries. Document records retain fields,
 metadata, versions, deletion state, and analyzed field lengths.
 
-Queries pass through a lexer and recursive-descent parser into a typed AST. The executor performs
-merge-style Boolean operations, field-specific BM25 scoring, positional phrase checks, filters, and
-bounded deterministic top-K collection.
+Queries pass through a lexer and recursive-descent parser into a syntax AST. A schema-aware planner
+validates field/type combinations, analyzes text, expands default fields, canonicalizes equivalent
+expressions, and orders conjunctions by estimated posting cost. The executor consumes the resulting
+immutable typed plan and performs merge-style Boolean operations, field-specific BM25 scoring,
+positional phrase checks, filters, and bounded deterministic top-K collection.
 
 The local `dse_index_cli` is the first complete application path. It validates and loads an escaped
 TSV corpus, builds the index, validates its invariants, parses one query, executes it, and writes a

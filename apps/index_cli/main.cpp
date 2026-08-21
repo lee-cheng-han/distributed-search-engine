@@ -135,7 +135,10 @@ int run(const Arguments& arguments) {
     return 2;
   }
   const dse::query::QueryExecutor executor(index);
-  auto result = executor.search(**query, {.top_k = arguments.top_k});
+  auto result = executor.search(
+      **query, {.top_k = arguments.top_k,
+                .default_fields = {{"title", 1.0}, {"body", 1.0}, {"tags", 1.0}},
+                .planner_limits = {}});
   if (!result) {
     std::cerr << "execution error: " << result.error().message << '\n';
     return 3;

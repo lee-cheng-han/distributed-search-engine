@@ -18,6 +18,7 @@ add_library(dse
   src/query/lexer.cpp
   src/query/executor.cpp
   src/query/parser.cpp
+  src/query/planner.cpp
   src/ranking/bm25.cpp
   src/ranking/top_k.cpp
 )
@@ -62,6 +63,7 @@ if(DSE_BUILD_TESTS)
     tests/unit/in_memory_index_test.cpp
     tests/unit/query_executor_test.cpp
     tests/unit/query_parser_test.cpp
+    tests/unit/query_planner_test.cpp
     tests/unit/schema_test.cpp
     tests/unit/top_k_test.cpp
   )

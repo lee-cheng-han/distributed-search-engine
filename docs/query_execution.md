@@ -1,12 +1,14 @@
 # Query execution
 
-The in-memory executor evaluates the typed query AST over sorted field-specific posting lists. It
-returns explicit execution errors and never converts postings to hash sets.
+The in-memory executor evaluates an immutable typed query plan over sorted field-specific posting
+lists. It returns explicit execution errors and never converts postings to hash sets. See
+[query planning](query_planning.md) for the validation and normalization performed before execution.
 
-Term queries are analyzed with the field's schema-owned analyzer used for indexing. Unfielded terms search the
-configured default fields and sum field-specific BM25 contributions when a document matches more than
-one field or term. Fielded expressions restrict all descendant term, phrase, and Boolean nodes to that
-field. Field boosts come from `SearchOptions`; AST boosts multiply the completed child score.
+Term and phrase text is already analyzed in the plan with the same schema-owned analyzer used for
+indexing. Execution does not analyze it again. Expanded unfielded terms sum field-specific BM25
+contributions when a document matches more than one field or term. Fielded expressions restrict all
+descendant term, phrase, and Boolean nodes to that field. Schema field boosts and query boosts are
+folded into planned scoring clauses.
 
 Boolean operations use two-way merge algorithms over document-ID-sorted candidate lists:
 
@@ -17,10 +19,10 @@ Boolean operations use two-way merge algorithms over document-ID-sorted candidat
 This defines standalone `NOT x` as “all live documents except x.” Deleted documents are absent from
 the universe and cannot reappear through negation or match-all.
 
-Phrase execution analyzes the phrase, intersects its term postings within one field, and then checks
-positions. A match requires every document position difference to equal the corresponding analyzed
-query position difference. Consequently, stop-word position gaps are preserved: removing a stop word
-does not make the surrounding terms adjacent.
+Phrase execution starts with the rarest planned term posting list, intersects the remaining postings
+within one field, and then checks positions. A match requires every document position difference to
+equal the corresponding planned token position difference. Consequently, stop-word position gaps are
+preserved: removing a stop word does not make the surrounding terms adjacent.
 
 Range filters compare indexed field values first and stored metadata second. Bounds are inclusive;
 `*` means unbounded. The schema rejects text ranges and validates integer or `YYYY-MM-DD` timestamp

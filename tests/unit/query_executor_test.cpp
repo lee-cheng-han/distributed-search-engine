@@ -29,7 +29,10 @@ dse::query::SearchResult search(const dse::query::QueryExecutor& executor, std::
   auto query = dse::query::parse(text);
   EXPECT_TRUE(query.has_value()) << (query ? "" : query.error().message);
   if (!query) return {};
-  auto result = executor.search(**query, {.top_k = top_k});
+  auto result = executor.search(
+      **query, {.top_k = top_k,
+                .default_fields = {{"title", 1.0}, {"body", 1.0}, {"tags", 1.0}},
+                .planner_limits = {}});
   EXPECT_TRUE(result.has_value()) << (result ? "" : result.error().message);
   return result ? std::move(*result) : dse::query::SearchResult{};
 }
@@ -133,7 +136,9 @@ TEST_F(QueryExecutorTest, RejectsInvalidOptionsAndMalformedAstNodes) {
   const auto parsed = dse::query::parse("search");
   ASSERT_TRUE(parsed.has_value());
   const auto invalid_options = executor.search(
-      **parsed, {.top_k = 10, .default_fields = {{"title", -1.0}}});
+      **parsed, {.top_k = 10,
+                 .default_fields = {{"title", -1.0}},
+                 .planner_limits = {}});
   ASSERT_FALSE(invalid_options.has_value());
   EXPECT_EQ(invalid_options.error().code, dse::query::ExecutionErrorCode::invalid_options);
 
