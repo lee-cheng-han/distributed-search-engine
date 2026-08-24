@@ -33,6 +33,11 @@ After evaluation, a bounded min-heap collects top K in `O(M log K)` time and `O(
 for M candidates. `total_hits` is counted before truncation. Results sort by score descending, then
 external document ID ascending for exact score ties.
 
+The optimized posting-list executor is differentially tested against a deliberately simple
+document-at-a-time evaluator that reanalyzes source fields without reading postings. The oracle
+independently computes BM25 statistics and compares match sets, `total_hits`, top-K ordering, and
+scores with an absolute tolerance of `1e-12`. Fixed generator seeds make failures reproducible.
+
 The executor currently operates on an immutable-by-convention in-memory view. Deadline checks,
 snapshot ownership, concurrent publication, and distributed global statistics arrive in later
 changes.

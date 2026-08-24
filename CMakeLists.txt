@@ -57,11 +57,13 @@ if(DSE_BUILD_TESTS)
     message(FATAL_ERROR "GoogleTest not found; install it or configure with -DDSE_BUILD_TESTS=OFF")
   endif()
   add_executable(dse_unit_tests
+    tests/support/reference_evaluator.cpp
     tests/unit/analyzer_test.cpp
     tests/unit/bm25_test.cpp
     tests/unit/document_file_test.cpp
     tests/unit/in_memory_index_test.cpp
     tests/unit/query_executor_test.cpp
+    tests/unit/query_differential_test.cpp
     tests/unit/query_parser_test.cpp
     tests/unit/query_planner_test.cpp
     tests/unit/schema_test.cpp

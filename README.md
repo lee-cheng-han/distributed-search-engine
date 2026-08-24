@@ -7,7 +7,9 @@ positional postings, document lengths, updates, tombstone deletes, BM25 ranking 
 top-K collection, a typed query parser, and Boolean, positional phrase, field, range, boost, and
 match-all execution. A schema-aware planner validates queries, analyzes text once, expands default
 fields, deduplicates equivalent clauses, and orders conjunctions using posting-list estimates before
-execution. A local CLI provides a complete ingestion-to-ranked-results path.
+execution. Seeded differential tests compare that optimized path against an independent
+document-at-a-time reference evaluator. A local CLI provides a complete ingestion-to-ranked-results
+path.
 Fields are schema-validated with owned per-field analyzers, exact keyword tags, and typed ISO dates.
 Posting lists and execution use compact segment-local `uint32_t` document IDs while APIs preserve
 external string IDs and deterministic external-ID tie-breaking.
@@ -61,5 +63,5 @@ See [datasets/README.md](datasets/README.md) for the input schema and
 - stale document versions cannot overwrite newer state;
 - deleted documents have no searchable postings.
 
-Before immutable segments lock in the storage model, the next planned change adds reference-model
-differential tests for query correctness. Persistent segments follow that prerequisite.
+Before immutable segments lock in the storage model, the next planned change fuzzes parsing,
+planning, and canonicalization under bounded work. Persistent segments follow that prerequisite.
