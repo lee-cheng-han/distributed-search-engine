@@ -3,6 +3,7 @@
 #include "dse/index/in_memory_index.hpp"
 #include "dse/query/executor.hpp"
 #include "dse/query/parser.hpp"
+#include "dse/storage/segment.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -15,19 +16,22 @@
 namespace {
 
 struct Arguments {
-  std::filesystem::path documents;
+  std::optional<std::filesystem::path> documents;
+  std::optional<std::filesystem::path> segment;
+  std::optional<std::filesystem::path> write_segment;
   std::string query;
+  bool has_query{};
   std::size_t top_k{10};
 };
 
 void usage(std::ostream& output) {
-  output << "Usage: dse_index_cli --documents PATH --query QUERY [--top-k K]\n";
+  output << "Usage:\n"
+         << "  dse_index_cli --documents PATH [--write-segment PATH] [--query QUERY] [--top-k K]\n"
+         << "  dse_index_cli --segment PATH --query QUERY [--top-k K]\n";
 }
 
 std::optional<Arguments> parse_arguments(int argc, char** argv) {
   Arguments arguments;
-  bool has_documents = false;
-  bool has_query = false;
   for (int index = 1; index < argc; ++index) {
     const std::string_view option(argv[index]);
     if (option == "--help") {
@@ -42,10 +46,13 @@ std::optional<Arguments> parse_arguments(int argc, char** argv) {
     const std::string_view value(argv[++index]);
     if (option == "--documents") {
       arguments.documents = value;
-      has_documents = true;
+    } else if (option == "--segment") {
+      arguments.segment = value;
+    } else if (option == "--write-segment") {
+      arguments.write_segment = value;
     } else if (option == "--query") {
       arguments.query = value;
-      has_query = true;
+      arguments.has_query = true;
     } else if (option == "--top-k") {
       const auto parsed =
           std::from_chars(value.data(), value.data() + value.size(), arguments.top_k);
@@ -60,7 +67,9 @@ std::optional<Arguments> parse_arguments(int argc, char** argv) {
       return std::nullopt;
     }
   }
-  if (!has_documents || !has_query) {
+  if (arguments.documents.has_value() == arguments.segment.has_value() ||
+      (arguments.segment && arguments.write_segment) ||
+      (!arguments.has_query && !arguments.write_segment)) {
     usage(std::cerr);
     return std::nullopt;
   }
@@ -71,7 +80,8 @@ std::string json_escape(std::string_view value) {
   std::string escaped;
   escaped.reserve(value.size());
   constexpr char hex[] = "0123456789abcdef";
-  for (const unsigned char byte : value) {
+  for (const char character : value) {
+    const auto byte = static_cast<unsigned char>(character);
     switch (byte) {
       case '"':
         escaped += "\\\"";
@@ -107,27 +117,11 @@ std::string json_escape(std::string_view value) {
   return escaped;
 }
 
-int run(const Arguments& arguments) {
-  auto documents = dse::index::read_documents(arguments.documents);
-  if (!documents) {
-    std::cerr << "document error at line " << documents.error().line << ", column "
-              << documents.error().column << ": " << documents.error().message << '\n';
-    return 2;
+int run_search(const dse::index::SearchIndexView& index, const Arguments& arguments) {
+  if (!arguments.has_query) {
+    std::cout << "{\"indexed_documents\":" << index.live_document_count() << "}\n";
+    return 0;
   }
-
-  dse::index::InMemoryIndex index;
-  for (auto& document : *documents) {
-    if (!index.put(std::move(document))) {
-      std::cerr << "document rejected because its ID is empty or version is stale\n";
-      return 2;
-    }
-  }
-  std::string invariant_reason;
-  if (!index.validate_invariants(&invariant_reason)) {
-    std::cerr << "index invariant failed: " << invariant_reason << '\n';
-    return 3;
-  }
-
   auto query = dse::query::parse(arguments.query);
   if (!query) {
     std::cerr << "query error at byte " << query.error().position << ": "
@@ -164,6 +158,45 @@ int run(const Arguments& arguments) {
   }
   std::cout << "]}\n";
   return 0;
+}
+
+int run(const Arguments& arguments) {
+  if (arguments.segment) {
+    auto reader = dse::storage::SegmentReader::open(*arguments.segment);
+    if (!reader) {
+      std::cerr << "segment error: " << reader.error().message << '\n';
+      return 3;
+    }
+    return run_search(*reader, arguments);
+  }
+
+  auto documents = dse::index::read_documents(*arguments.documents);
+  if (!documents) {
+    std::cerr << "document error at line " << documents.error().line << ", column "
+              << documents.error().column << ": " << documents.error().message << '\n';
+    return 2;
+  }
+
+  dse::index::InMemoryIndex index;
+  for (auto& document : *documents) {
+    if (!index.put(std::move(document))) {
+      std::cerr << "document rejected because its ID is empty or version is stale\n";
+      return 2;
+    }
+  }
+  std::string invariant_reason;
+  if (!index.validate_invariants(&invariant_reason)) {
+    std::cerr << "index invariant failed: " << invariant_reason << '\n';
+    return 3;
+  }
+  if (arguments.write_segment) {
+    auto written = dse::storage::SegmentWriter::write(*arguments.write_segment, index.snapshot());
+    if (!written) {
+      std::cerr << "segment error: " << written.error().message << '\n';
+      return 3;
+    }
+  }
+  return run_search(index, arguments);
 }
 
 }  // namespace

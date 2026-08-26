@@ -30,8 +30,30 @@ TokenKind classify_word(std::string_view word) {
 
 }  // namespace
 
-std::expected<std::vector<Lexeme>, ParseError> lex(std::string_view input) {
+std::expected<std::vector<Lexeme>, ParseError> lex(std::string_view input,
+                                                   const QueryLimits& limits) {
+  const auto limit_error = [&](std::size_t position, std::string message) {
+    return std::unexpected(ParseError{ParseErrorCode::resource_limit, position,
+                                      std::move(message)});
+  };
+  if (limits.maximum_query_bytes == 0U || limits.maximum_lexemes == 0U ||
+      limits.maximum_lexeme_bytes == 0U || limits.maximum_nesting_depth == 0U) {
+    return limit_error(0, "query limits must be greater than zero");
+  }
+  if (input.size() > limits.maximum_query_bytes) {
+    return limit_error(limits.maximum_query_bytes, "query byte limit exceeded");
+  }
   std::vector<Lexeme> tokens;
+  const auto append = [&](Lexeme token) -> std::expected<void, ParseError> {
+    if (token.text.size() > limits.maximum_lexeme_bytes) {
+      return limit_error(token.position, "query lexeme byte limit exceeded");
+    }
+    if (tokens.size() >= limits.maximum_lexemes) {
+      return limit_error(token.position, "query lexeme count limit exceeded");
+    }
+    tokens.push_back(std::move(token));
+    return {};
+  };
   std::size_t cursor = 0;
   while (cursor < input.size()) {
     const auto byte = static_cast<unsigned char>(input[cursor]);
@@ -42,25 +64,25 @@ std::expected<std::vector<Lexeme>, ParseError> lex(std::string_view input) {
     const auto position = cursor;
     switch (input[cursor]) {
       case '(':
-        tokens.push_back({TokenKind::left_parenthesis, "(", cursor++});
+        if (auto result = append({TokenKind::left_parenthesis, "(", cursor++}); !result) return std::unexpected(result.error());
         continue;
       case ')':
-        tokens.push_back({TokenKind::right_parenthesis, ")", cursor++});
+        if (auto result = append({TokenKind::right_parenthesis, ")", cursor++}); !result) return std::unexpected(result.error());
         continue;
       case ':':
-        tokens.push_back({TokenKind::colon, ":", cursor++});
+        if (auto result = append({TokenKind::colon, ":", cursor++}); !result) return std::unexpected(result.error());
         continue;
       case '^':
-        tokens.push_back({TokenKind::caret, "^", cursor++});
+        if (auto result = append({TokenKind::caret, "^", cursor++}); !result) return std::unexpected(result.error());
         continue;
       case '[':
-        tokens.push_back({TokenKind::left_bracket, "[", cursor++});
+        if (auto result = append({TokenKind::left_bracket, "[", cursor++}); !result) return std::unexpected(result.error());
         continue;
       case ']':
-        tokens.push_back({TokenKind::right_bracket, "]", cursor++});
+        if (auto result = append({TokenKind::right_bracket, "]", cursor++}); !result) return std::unexpected(result.error());
         continue;
       case '*':
-        tokens.push_back({TokenKind::star, "*", cursor++});
+        if (auto result = append({TokenKind::star, "*", cursor++}); !result) return std::unexpected(result.error());
         continue;
       case '"': {
         ++cursor;
@@ -88,7 +110,7 @@ std::expected<std::vector<Lexeme>, ParseError> lex(std::string_view input) {
           return std::unexpected(ParseError{ParseErrorCode::unterminated_phrase, position,
                                             "quoted phrase is missing its closing quote"});
         }
-        tokens.push_back({TokenKind::phrase, std::move(phrase), position});
+        if (auto result = append({TokenKind::phrase, std::move(phrase), position}); !result) return std::unexpected(result.error());
         continue;
       }
       default:
@@ -105,7 +127,7 @@ std::expected<std::vector<Lexeme>, ParseError> lex(std::string_view input) {
                                         "unexpected character in query"});
     }
     std::string word(input.substr(start, cursor - start));
-    tokens.push_back({classify_word(word), std::move(word), start});
+    if (auto result = append({classify_word(word), std::move(word), start}); !result) return std::unexpected(result.error());
   }
   tokens.push_back({TokenKind::end, "", input.size()});
   return tokens;

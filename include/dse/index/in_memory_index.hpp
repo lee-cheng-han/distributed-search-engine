@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dse/document.hpp"
+#include "dse/index/search_index_view.hpp"
 #include "dse/index/schema.hpp"
 
 #include <cstdint>
@@ -13,30 +14,6 @@
 #include <vector>
 
 namespace dse::index {
-
-struct Posting {
-  InternalDocumentId document_id;
-  std::uint32_t term_frequency{};
-  std::vector<std::uint32_t> positions;
-};
-
-struct TermEntry {
-  std::uint32_t document_frequency{};
-  std::vector<Posting> postings;
-};
-
-struct DocumentRecord {
-  InternalDocumentId internal_id;
-  Document document;
-  std::map<std::string, std::uint32_t, std::less<>> field_lengths;
-  std::map<std::string, std::vector<std::string>, std::less<>> indexed_terms;
-};
-
-struct FieldStatistics {
-  std::size_t document_count{};
-  std::uint64_t total_length{};
-  double average_length{};
-};
 
 enum class IndexErrorCode {
   empty_document_id,
@@ -53,7 +30,7 @@ struct IndexError {
   std::optional<SchemaError> schema_error;
 };
 
-class InMemoryIndex {
+class InMemoryIndex final : public SearchIndexView {
  public:
   explicit InMemoryIndex(
       IndexSchema schema = IndexSchema::default_schema(),
@@ -64,19 +41,21 @@ class InMemoryIndex {
   [[nodiscard]] std::expected<void, IndexError> put(Document document);
   [[nodiscard]] std::expected<void, IndexError> erase(const DocumentId& id,
                                                        std::uint64_t version);
-  [[nodiscard]] const TermEntry* lookup(std::string_view field, std::string_view term) const;
-  [[nodiscard]] const DocumentRecord* document(const DocumentId& id) const;
-  [[nodiscard]] const DocumentRecord* document(InternalDocumentId id) const;
-  [[nodiscard]] std::optional<InternalDocumentId> internal_id(const DocumentId& id) const noexcept;
-  [[nodiscard]] const DocumentId* external_id(InternalDocumentId id) const noexcept;
-  [[nodiscard]] std::vector<InternalDocumentId> live_document_ids() const;
-  [[nodiscard]] std::size_t live_document_count() const noexcept;
-  [[nodiscard]] FieldStatistics field_statistics(std::string_view field) const noexcept;
-  [[nodiscard]] const IndexSchema& schema() const noexcept { return schema_; }
-  [[nodiscard]] bool validate_invariants(std::string* reason = nullptr) const;
+  [[nodiscard]] const TermEntry* lookup(std::string_view field, std::string_view term) const override;
+  [[nodiscard]] const DocumentRecord* document(const DocumentId& id) const override;
+  [[nodiscard]] const DocumentRecord* document(InternalDocumentId id) const override;
+  [[nodiscard]] std::optional<InternalDocumentId> internal_id(
+      const DocumentId& id) const noexcept override;
+  [[nodiscard]] const DocumentId* external_id(InternalDocumentId id) const noexcept override;
+  [[nodiscard]] std::vector<InternalDocumentId> live_document_ids() const override;
+  [[nodiscard]] std::size_t live_document_count() const noexcept override;
+  [[nodiscard]] FieldStatistics field_statistics(std::string_view field) const noexcept override;
+  [[nodiscard]] const IndexSchema& schema() const noexcept override { return schema_; }
+  [[nodiscard]] bool validate_invariants(std::string* reason = nullptr) const override;
+  [[nodiscard]] IndexSnapshot snapshot() const;
 
  private:
-  using Dictionary = std::map<std::string, TermEntry, std::less<>>;
+  using Dictionary = TermDictionary;
   struct FieldAccumulator {
     std::size_t document_count{};
     std::uint64_t total_length{};

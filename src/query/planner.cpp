@@ -60,7 +60,7 @@ std::string canonical(const PlanNode& node) {
 
 class Builder {
  public:
-  Builder(const index::InMemoryIndex& index, const PlannerOptions& options)
+  Builder(const index::SearchIndexView& index, const PlannerOptions& options)
       : index_(index), options_(options) {}
 
   std::expected<Plan, PlanningError> build(const QueryNode& query,
@@ -319,7 +319,7 @@ class Builder {
         error(PlanningErrorCode::invalid_query_tree, "query AST contains an invalid node"));
   }
 
-  const index::InMemoryIndex& index_;
+  const index::SearchIndexView& index_;
   const PlannerOptions& options_;
   std::size_t source_nodes_{};
   std::size_t planned_nodes_{};

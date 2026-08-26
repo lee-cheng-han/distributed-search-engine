@@ -1,5 +1,13 @@
 # Query language
 
+## Resource limits
+
+Parsing is bounded before AST construction. Defaults permit at most 16 KiB of query text, 2,048
+lexemes, 4 KiB per lexeme, and 128 levels of parenthesis nesting. Applications can supply stricter
+`QueryLimits`; every required limit must be nonzero. Violations return a structured
+`ParseErrorCode::resource_limit` rather than attempting unbounded allocation or work. Planning adds
+separate bounds for AST nodes, analyzed tokens, phrase tokens, and plan depth.
+
 The query language is tokenized and parsed with a bounded recursive-descent parser. It is not parsed
 with regular expressions. Positions in parse errors are zero-based UTF-8 byte offsets.
 

@@ -221,6 +221,18 @@ FieldStatistics InMemoryIndex::field_statistics(std::string_view field) const no
                             static_cast<double>(statistic->second.document_count)};
 }
 
+IndexSnapshot InMemoryIndex::snapshot() const {
+  FieldStatisticsMap statistics;
+  for (const auto& [field, accumulator] : field_statistics_) {
+    statistics.emplace(field, FieldStatistics{
+        .document_count = accumulator.document_count,
+        .total_length = accumulator.total_length,
+        .average_length = static_cast<double>(accumulator.total_length) /
+                          static_cast<double>(accumulator.document_count)});
+  }
+  return IndexSnapshot(schema_, fields_, documents_, external_ids_, std::move(statistics));
+}
+
 bool InMemoryIndex::validate_invariants(std::string* reason) const {
   const auto fail = [&](std::string value) { if (reason) *reason = std::move(value); return false; };
   std::map<std::string, FieldAccumulator, std::less<>> expected_statistics;

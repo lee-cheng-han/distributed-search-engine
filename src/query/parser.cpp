@@ -10,11 +10,10 @@
 namespace dse::query {
 namespace {
 
-constexpr std::size_t kMaximumNestingDepth = 128;
-
 class Parser {
  public:
-  explicit Parser(std::vector<Lexeme> tokens) : tokens_(std::move(tokens)) {}
+  Parser(std::vector<Lexeme> tokens, std::size_t maximum_depth)
+      : tokens_(std::move(tokens)), maximum_depth_(maximum_depth) {}
 
   std::expected<Query, ParseError> run() {
     if (peek().kind == TokenKind::end) {
@@ -143,7 +142,7 @@ class Parser {
       return make_query<MatchAllQuery>(token.position);
     }
     if (token.kind == TokenKind::left_parenthesis) {
-      if (depth_ >= kMaximumNestingDepth) {
+      if (depth_ >= maximum_depth_) {
         return fail(ParseErrorCode::nesting_too_deep, token, "query nesting limit exceeded");
       }
       consume();
@@ -185,16 +184,17 @@ class Parser {
   }
 
   std::vector<Lexeme> tokens_;
+  std::size_t maximum_depth_;
   std::size_t cursor_{};
   std::size_t depth_{};
 };
 
 }  // namespace
 
-std::expected<Query, ParseError> parse(std::string_view input) {
-  auto tokens = lex(input);
+std::expected<Query, ParseError> parse(std::string_view input, const QueryLimits& limits) {
+  auto tokens = lex(input, limits);
   if (!tokens) return std::unexpected(tokens.error());
-  return Parser(std::move(*tokens)).run();
+  return Parser(std::move(*tokens), limits.maximum_nesting_depth).run();
 }
 
 }  // namespace dse::query

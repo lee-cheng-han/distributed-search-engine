@@ -10,6 +10,13 @@
 
 namespace dse::query {
 
+struct QueryLimits {
+  std::size_t maximum_query_bytes{16U * 1024U};
+  std::size_t maximum_lexemes{2'048};
+  std::size_t maximum_lexeme_bytes{4U * 1024U};
+  std::size_t maximum_nesting_depth{128};
+};
+
 enum class TokenKind {
   word,
   phrase,
@@ -34,6 +41,7 @@ struct Lexeme {
   auto operator<=>(const Lexeme&) const = default;
 };
 
-[[nodiscard]] std::expected<std::vector<Lexeme>, ParseError> lex(std::string_view input);
+[[nodiscard]] std::expected<std::vector<Lexeme>, ParseError> lex(
+    std::string_view input, const QueryLimits& limits = {});
 
 }  // namespace dse::query

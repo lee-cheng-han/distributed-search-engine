@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dse/index/search_index_view.hpp"
 #include "dse/index/in_memory_index.hpp"
 #include "dse/query/ast.hpp"
 #include "dse/query/plan.hpp"
@@ -45,13 +46,13 @@ struct PlanningError {
 
 class QueryPlanner {
  public:
-  explicit QueryPlanner(const index::InMemoryIndex& index) : index_(index) {}
+  explicit QueryPlanner(const index::SearchIndexView& index) : index_(index) {}
 
   [[nodiscard]] std::expected<PlannedQuery, PlanningError> plan(
       const QueryNode& query, const PlannerOptions& options = {}) const;
 
  private:
-  const index::InMemoryIndex& index_;
+  const index::SearchIndexView& index_;
 };
 
 }  // namespace dse::query

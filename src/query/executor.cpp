@@ -99,7 +99,7 @@ bool positions_match(const std::vector<const index::Posting*>& postings,
 
 class Evaluator {
  public:
-  Evaluator(const index::InMemoryIndex& index, const ranking::BM25Scorer& scorer)
+  Evaluator(const index::SearchIndexView& index, const ranking::BM25Scorer& scorer)
       : index_(index), scorer_(scorer) {}
 
   std::expected<Candidates, ExecutionError> evaluate(const PlanNode& plan) const {
@@ -259,13 +259,13 @@ class Evaluator {
     return result;
   }
 
-  const index::InMemoryIndex& index_;
+  const index::SearchIndexView& index_;
   const ranking::BM25Scorer& scorer_;
 };
 
 }  // namespace
 
-QueryExecutor::QueryExecutor(const index::InMemoryIndex& index, ranking::BM25Parameters parameters)
+QueryExecutor::QueryExecutor(const index::SearchIndexView& index, ranking::BM25Parameters parameters)
     : index_(index), scorer_(ranking::BM25Scorer::create(parameters)) {}
 
 std::expected<SearchResult, ExecutionError> QueryExecutor::search(

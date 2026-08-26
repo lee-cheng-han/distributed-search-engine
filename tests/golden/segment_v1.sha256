@@ -1,0 +1,4 @@
+0208192a0392324a6189c17c763e9b505ece866440a915daff5c54f38e5474b7  cli-restart-test.dseg
+
+Generated deterministically from datasets/synthetic/sample.tsv with segment ID 1. This fingerprint
+pins the version-1 byte representation without committing a redundant binary corpus copy.

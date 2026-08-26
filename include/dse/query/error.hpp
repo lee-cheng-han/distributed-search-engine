@@ -14,6 +14,7 @@ enum class ParseErrorCode {
   expected_range_bound,
   invalid_boost,
   nesting_too_deep,
+  resource_limit,
 };
 
 struct ParseError {

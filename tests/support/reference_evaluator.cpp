@@ -29,7 +29,7 @@ std::optional<std::string_view> value(const index::DocumentRecord& record,
   return std::nullopt;
 }
 
-std::vector<analysis::Token> tokens(const index::InMemoryIndex& index,
+std::vector<analysis::Token> tokens(const index::SearchIndexView& index,
                                     const index::DocumentRecord& record,
                                     std::string_view field) {
   const auto* definition = index.schema().find(field);
@@ -44,7 +44,7 @@ std::uint32_t frequency(const std::vector<analysis::Token>& analyzed, std::strin
 
 class Oracle {
  public:
-  Oracle(const index::InMemoryIndex& index, ranking::BM25Parameters parameters)
+  Oracle(const index::SearchIndexView& index, ranking::BM25Parameters parameters)
       : index_(index), parameters_(parameters) {}
 
   Match evaluate(const query::PlanNode& plan, const index::DocumentRecord& document) const {
@@ -169,13 +169,13 @@ class Oracle {
     return std::log1p((count - df + 0.5) / (df + 0.5)) * frequency_weight * boost;
   }
 
-  const index::InMemoryIndex& index_;
+  const index::SearchIndexView& index_;
   ranking::BM25Parameters parameters_;
 };
 
 }  // namespace
 
-ReferenceEvaluator::ReferenceEvaluator(const index::InMemoryIndex& index,
+ReferenceEvaluator::ReferenceEvaluator(const index::SearchIndexView& index,
                                        ranking::BM25Parameters parameters)
     : index_(index), parameters_(parameters) {}
 

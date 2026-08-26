@@ -13,14 +13,14 @@ namespace dse::test {
 // consults posting lists, making it independent of the optimized executor's merge algorithms.
 class ReferenceEvaluator {
  public:
-  explicit ReferenceEvaluator(const index::InMemoryIndex& index,
+  explicit ReferenceEvaluator(const index::SearchIndexView& index,
                               ranking::BM25Parameters parameters = {});
 
   [[nodiscard]] query::SearchResult search(const query::PlannedQuery& query,
                                             std::size_t top_k) const;
 
  private:
-  const index::InMemoryIndex& index_;
+  const index::SearchIndexView& index_;
   ranking::BM25Parameters parameters_;
 };
 

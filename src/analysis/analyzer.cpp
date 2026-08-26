@@ -51,9 +51,19 @@ std::vector<Token> StandardAnalyzer::analyze(std::string_view text) const {
   return tokens;
 }
 
+std::string StandardAnalyzer::descriptor() const {
+  std::string result = "standard-v1:" + std::to_string(stop_words_.size()) + ':';
+  for (const auto& word : stop_words_) {
+    result += std::to_string(word.size()) + ':' + word;
+  }
+  return result;
+}
+
 std::vector<Token> KeywordAnalyzer::analyze(std::string_view text) const {
   if (text.empty()) return {};
   return {{std::string(text), 0, 0, checked_offset(text.size())}};
 }
+
+std::string KeywordAnalyzer::descriptor() const { return "keyword-v1"; }
 
 }  // namespace dse::analysis

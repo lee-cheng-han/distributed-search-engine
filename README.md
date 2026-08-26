@@ -9,7 +9,8 @@ match-all execution. A schema-aware planner validates queries, analyzes text onc
 fields, deduplicates equivalent clauses, and orders conjunctions using posting-list estimates before
 execution. Seeded differential tests compare that optimized path against an independent
 document-at-a-time reference evaluator. A local CLI provides a complete ingestion-to-ranked-results
-path.
+path. The index can be serialized into a checksummed immutable segment and reopened in a later
+process without rebuilding postings or reanalyzing documents.
 Fields are schema-validated with owned per-field analyzers, exact keyword tags, and typed ISO dates.
 Posting lists and execution use compact segment-local `uint32_t` document IDs while APIs preserve
 external string IDs and deterministic external-ID tie-breaking.
@@ -34,6 +35,16 @@ installed as a CMake package, the build can use `/usr/src/googletest`.
 ./scripts/sanitize.sh
 ```
 
+With Clang and libFuzzer available, build and run the bounded query pipeline fuzzer:
+
+```bash
+cmake -S . -B build-fuzz -DCMAKE_CXX_COMPILER=clang++ -DDSE_BUILD_TESTS=OFF \
+  -DDSE_BUILD_FUZZERS=ON
+cmake --build build-fuzz --parallel
+./build-fuzz/dse_query_fuzz -max_total_time=60
+./build-fuzz/dse_segment_fuzz -max_total_time=60
+```
+
 ## Local demo
 
 Index the deterministic sample corpus and run a query:
@@ -49,6 +60,18 @@ scores, document IDs, and stored fields. To use another escaped TSV corpus direc
 ./build/dse_index_cli --documents path/to/documents.tsv --query 'search AND systems' --top-k 20
 ```
 
+Persist and reopen the index across processes:
+
+```bash
+./build/dse_index_cli --documents datasets/synthetic/sample.tsv \
+  --write-segment /tmp/sample.dseg --query search
+./build/dse_index_cli --segment /tmp/sample.dseg --query 'title:distributed OR body:replication'
+```
+
+The [segment format](docs/segment_format.md), [current architecture](docs/current-architecture.md),
+[atomic generation protocol](docs/index_generations.md), and
+[target architecture](docs/target-architecture.md) document the durability boundary and planned evolution.
+
 See [datasets/README.md](datasets/README.md) for the input schema and
 [query_language.md](docs/query_language.md) for syntax.
 
@@ -63,5 +86,6 @@ See [datasets/README.md](datasets/README.md) for the input schema and
 - stale document versions cannot overwrite newer state;
 - deleted documents have no searchable postings.
 
-Before immutable segments lock in the storage model, the next planned change fuzzes parsing,
-planning, and canonicalization under bounded work. Persistent segments follow that prerequisite.
+The engine now has bounded mutable flushing, multi-segment version resolution, and explicit
+compaction. The next storage change is asynchronous active/frozen flushing with reader-aware file
+reclamation.

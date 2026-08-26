@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dse/index/search_index_view.hpp"
 #include "dse/index/in_memory_index.hpp"
 #include "dse/query/ast.hpp"
 #include "dse/query/planner.hpp"
@@ -46,7 +47,7 @@ struct ExecutionError {
 
 class QueryExecutor {
  public:
-  explicit QueryExecutor(const index::InMemoryIndex& index,
+  explicit QueryExecutor(const index::SearchIndexView& index,
                          ranking::BM25Parameters parameters = {});
 
   [[nodiscard]] std::expected<SearchResult, ExecutionError> search(
@@ -55,7 +56,7 @@ class QueryExecutor {
       const PlannedQuery& query, std::size_t top_k = 10) const;
 
  private:
-  const index::InMemoryIndex& index_;
+  const index::SearchIndexView& index_;
   std::expected<ranking::BM25Scorer, ranking::BM25Error> scorer_;
 };
 
