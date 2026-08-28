@@ -35,11 +35,13 @@ and posting invariants before exposing data.
 
 Segment files and checksummed manifests use temporary writes, file fsync, atomic rename, and directory
 fsync. A checksummed `CURRENT` pointer selects one monotonically increasing generation; retained
-generation objects keep old readers alive. A bounded local writer publishes threshold or explicit
-flushes, recovers version state after restart, resolves latest versions and tombstones across
-segments, and supports explicit full compaction. Generation resolution currently materializes a
-fresh in-memory view; background work, obsolete-file reclamation, compression, and memory mapping
-remain unimplemented.
+generation objects keep old readers alive. A bounded local writer rotates active state into a
+bounded frozen queue, publishes it on a dedicated background worker, applies producer backpressure,
+and makes `refresh()` a durability barrier. It recovers version state after restart, resolves latest
+versions and tombstones across segments, automatically compacts at a configurable segment count,
+and reclaims files only after readers have loaded their owned segment state. Generation resolution
+and compaction currently materialize a fresh in-memory view; streaming merges, compression, and
+memory mapping remain unimplemented.
 
 ## Application, testing, and operations
 
@@ -50,6 +52,6 @@ arbitrary input, segment round trips, and corruption rejection. CI runs the norm
 suites. A libFuzzer-compatible query target exists, although the local Clang installation may require
 separate compiler-runtime packages.
 
-There is no concurrency, benchmark harness, measured performance result, network API, sharding,
+Writer concurrency is bounded and tested, but there is no benchmark harness, measured performance result, network API, sharding,
 replication, cluster membership, cache, metrics exporter, tracing, Docker deployment, or distributed
 behavior yet.

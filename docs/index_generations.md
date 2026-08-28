@@ -14,10 +14,13 @@ Opening validates the pointer, manifest checksum, metadata rules, every segment 
 segment-ID agreement before returning shared segment readers. Retained `OpenGeneration` objects keep
 their readers alive across later publication.
 
-`IndexWriter` maintains a bounded mutable index and publishes a generation at its threshold or on
-`refresh()`. Restart reconstructs version guards from published segments. `GenerationView` resolves
+`IndexWriter` rotates a bounded active index into a bounded frozen queue and publishes from one
+background worker. Producers receive backpressure when that queue is full; `refresh()` freezes the
+active state and waits until publication is durable. Restart reconstructs version guards from published segments. `GenerationView` resolves
 duplicate external IDs by highest version and applies tombstones across segments, while
 `merge_all()` rewrites the logical result into one segment.
 
-Generation resolution currently rebuilds postings in memory, and flush/merge work runs on the caller
-thread. Orphan-manifest and obsolete-segment reclamation waits for a reader-aware deletion policy.
+Generation resolution and compaction currently rebuild postings in memory. Automatic compaction is
+triggered by segment count rather than measured size tiers. Because readers fully buffer and own
+segment state, superseded files can be removed after replacement publication without invalidating
+retained readers. Orphan temporary-file cleanup and streaming merges remain future work.

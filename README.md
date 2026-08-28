@@ -86,6 +86,6 @@ See [datasets/README.md](datasets/README.md) for the input schema and
 - stale document versions cannot overwrite newer state;
 - deleted documents have no searchable postings.
 
-The engine now has bounded mutable flushing, multi-segment version resolution, and explicit
-compaction. The next storage change is asynchronous active/frozen flushing with reader-aware file
-reclamation.
+The engine now has bounded asynchronous active/frozen flushing, multi-segment version resolution,
+automatic and explicit compaction, and safe reclamation for fully buffered retained readers. The
+next storage work is streaming size-tiered merging and startup cleanup of orphaned temporary files.
