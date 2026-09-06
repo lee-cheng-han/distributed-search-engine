@@ -52,4 +52,31 @@ std::expected<ManifestSegment, GenerationError> SegmentMerger::merge(
   if (!result) return std::unexpected(error(GenerationErrorCode::segment_error, result.error().message));
   return ManifestSegment{output_id, filename};
 }
+
+std::expected<ManifestSegment, GenerationError> SegmentMerger::merge_segments(
+    const std::vector<std::shared_ptr<const SegmentReader>>& segments,
+    const std::filesystem::path& directory, SegmentId output_id) {
+  if (segments.empty()) return std::unexpected(error(GenerationErrorCode::empty_generation, "merge has no segments"));
+  const auto& schema = segments.front()->schema();
+  index::InMemoryIndex resolved(schema);
+  std::map<DocumentId, Document> winners;
+  for (const auto& segment : segments) {
+    if (!same_schema(segment->schema(), schema)) return std::unexpected(error(GenerationErrorCode::schema_mismatch, "segment schemas differ"));
+    for (const auto& [id, record] : segment->records()) {
+      const auto found = winners.find(id);
+      if (found == winners.end() || record.document.version > found->second.version) winners[id] = record.document;
+      else if (record.document.version == found->second.version && record.document.deleted != found->second.deleted)
+        return std::unexpected(error(GenerationErrorCode::invalid_document, "conflicting equal document versions"));
+    }
+  }
+  for (auto& [id, document] : winners) {
+    (void)id;
+    auto inserted = resolved.put(std::move(document));
+    if (!inserted) return std::unexpected(error(GenerationErrorCode::invalid_document, inserted.error().message));
+  }
+  const std::string filename = "segment-" + std::to_string(output_id.value()) + ".dseg";
+  auto written = SegmentWriter::write(directory / filename, resolved.snapshot(), {.segment_id=output_id});
+  if (!written) return std::unexpected(error(GenerationErrorCode::segment_error, written.error().message));
+  return ManifestSegment{output_id, filename};
+}
 }  // namespace dse::storage

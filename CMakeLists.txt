@@ -12,6 +12,7 @@ if(DSE_ENABLE_TSAN AND (DSE_ENABLE_ASAN OR DSE_ENABLE_UBSAN))
 endif()
 
 add_library(dse
+  src/distributed/local_cluster.cpp
   src/analysis/analyzer.cpp
   src/index/document_file.cpp
   src/index/schema.cpp
@@ -26,6 +27,7 @@ add_library(dse
   src/storage/manifest.cpp
   src/storage/generation.cpp
   src/storage/index_writer.cpp
+  src/storage/write_ahead_log.cpp
 )
 add_library(dse::dse ALIAS dse)
 target_compile_features(dse PUBLIC cxx_std_23)
@@ -88,6 +90,7 @@ if(DSE_BUILD_TESTS)
     tests/unit/generation_test.cpp
     tests/unit/in_memory_index_test.cpp
     tests/unit/index_writer_test.cpp
+    tests/unit/local_cluster_test.cpp
     tests/unit/manifest_test.cpp
     tests/unit/query_executor_test.cpp
     tests/unit/query_differential_test.cpp
@@ -97,6 +100,7 @@ if(DSE_BUILD_TESTS)
     tests/unit/schema_test.cpp
     tests/unit/segment_test.cpp
     tests/unit/top_k_test.cpp
+    tests/unit/write_ahead_log_test.cpp
   )
   target_link_libraries(dse_unit_tests PRIVATE dse::dse GTest::gtest_main)
   target_compile_definitions(dse_unit_tests PRIVATE DSE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

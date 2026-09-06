@@ -7,7 +7,8 @@ segments, reopen with stale-version protection, resolve versions/tombstones, and
 segment. Flushes run on one bounded background publisher with explicit refresh semantics; automatic
 and explicit compaction serialize against publication and reclaim superseded files after buffered
 readers own their data. Resolved query views and compaction are still materialized in memory. There
-is no sharding, replication, network API,
+is a checksummed fsynced mutation log, but no group-commit mode. In-process sharding validates stable
+routing, parallel fan-out, global scoring, and top-K merging, but there is no RPC, replication,
 metrics, Docker deployment, or measured benchmark yet. Range bounds are schema-validated for keyword, int64, and timestamp fields; persisted
 typed values are still scanned rather than read from columnar doc-value structures. The standard
 analyzer has documented byte-oriented UTF-8 behavior and no stemming.

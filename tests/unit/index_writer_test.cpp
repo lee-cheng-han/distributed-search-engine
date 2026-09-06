@@ -43,12 +43,24 @@ TEST(IndexWriter, AutomaticCompactionReclaimsFilesWithoutBreakingRetainedReaders
   EXPECT_FALSE(std::filesystem::exists(dir.path()/"segment-1.dseg"));
 }
 
+TEST(IndexWriter, SizeAwarePartialCompactionRetainsUnselectedSegments) {
+  TempDir dir;
+  auto writer=dse::storage::IndexWriter::open(dir.path(),dse::index::IndexSchema::default_schema(),{.maximum_buffered_mutations=1,.maximum_frozen_indexes=2,.automatic_merge_segment_count=4,.merge_width=2,.reclaim_obsolete_files=false}); ASSERT_TRUE(writer);
+  for(std::uint64_t i=0;i<4;++i)ASSERT_TRUE((*writer)->put(doc("partial-"+std::to_string(i),i==0?"small":"a substantially larger segment document body "+std::to_string(i),1)));
+  ASSERT_TRUE((*writer)->refresh());auto view=(*writer)->open_search_view();ASSERT_TRUE(view);
+  EXPECT_EQ(view->source().manifest().segments.size(),3U);
+  EXPECT_EQ(view->live_document_count(),4U);
+  ASSERT_TRUE((*writer)->merge_all());view=(*writer)->open_search_view();ASSERT_TRUE(view);EXPECT_EQ(view->source().manifest().segments.size(),1U);EXPECT_EQ(view->live_document_count(),4U);
+}
+
 TEST(IndexWriter, ConcurrentProducersRemainBoundedAndSearchable) {
   TempDir dir;
   auto writer=dse::storage::IndexWriter::open(dir.path(),dse::index::IndexSchema::default_schema(),{.maximum_buffered_mutations=3,.maximum_frozen_indexes=1,.automatic_merge_segment_count=4}); ASSERT_TRUE(writer);
   std::atomic_bool failed{}; std::vector<std::thread> producers;
   for(std::uint64_t thread=0;thread<4;++thread) producers.emplace_back([&,thread]{for(std::uint64_t i=0;i<10;++i){auto result=(*writer)->put(doc("doc-"+std::to_string(thread)+"-"+std::to_string(i),"parallel",1));if(!result)failed=true;}});
+  std::thread refresher([&]{for(int i=0;i<8;++i)if(!(*writer)->refresh())failed=true;});
   for(auto& producer:producers)producer.join();
+  refresher.join();
   EXPECT_FALSE(failed.load()); ASSERT_TRUE((*writer)->refresh());
   const auto stats=(*writer)->statistics(); EXPECT_EQ(stats.buffered_mutations,0U); EXPECT_EQ(stats.frozen_indexes,0U);
   auto view=(*writer)->open_search_view(); ASSERT_TRUE(view); EXPECT_EQ(view->live_document_count(),40U);

@@ -71,6 +71,8 @@ Persist and reopen the index across processes:
 The [segment format](docs/segment_format.md), [current architecture](docs/current-architecture.md),
 [atomic generation protocol](docs/index_generations.md), and
 [target architecture](docs/target-architecture.md) document the durability boundary and planned evolution.
+Write-ahead recovery is specified in [write_ahead_log.md](docs/write_ahead_log.md), and the
+in-process distributed execution contract is in [local_sharding.md](docs/local_sharding.md).
 
 See [datasets/README.md](datasets/README.md) for the input schema and
 [query_language.md](docs/query_language.md) for syntax.
@@ -86,6 +88,6 @@ See [datasets/README.md](datasets/README.md) for the input schema and
 - stale document versions cannot overwrite newer state;
 - deleted documents have no searchable postings.
 
-The engine now has bounded asynchronous active/frozen flushing, multi-segment version resolution,
-automatic and explicit compaction, and safe reclamation for fully buffered retained readers. The
-next storage work is streaming size-tiered merging and startup cleanup of orphaned temporary files.
+The engine now has crash-replayed writes, bounded asynchronous flushing, size-aware partial
+compaction, safe buffered-reader reclamation, and oracle-equivalent in-process shard fan-out. The
+next major boundary is real deadline-aware RPC between shard processes.

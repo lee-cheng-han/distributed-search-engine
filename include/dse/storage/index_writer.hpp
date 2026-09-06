@@ -1,6 +1,7 @@
 #pragma once
 #include "dse/index/in_memory_index.hpp"
 #include "dse/storage/generation.hpp"
+#include "dse/storage/write_ahead_log.hpp"
 #include <condition_variable>
 #include <deque>
 #include <expected>
@@ -13,7 +14,7 @@
 namespace dse::storage {
 enum class WriterErrorCode { index_error, storage_error, stale_version, closed };
 struct WriterError { WriterErrorCode code; std::string message; };
-struct IndexWriterOptions { std::size_t maximum_buffered_mutations{10'000}; std::size_t maximum_frozen_indexes{2}; std::size_t automatic_merge_segment_count{8}; bool reclaim_obsolete_files{true}; };
+struct IndexWriterOptions { std::size_t maximum_buffered_mutations{10'000}; std::size_t maximum_frozen_indexes{2}; std::size_t automatic_merge_segment_count{8}; std::size_t merge_width{4}; bool reclaim_obsolete_files{true}; };
 struct IndexWriterStatistics { std::size_t buffered_mutations{}; std::size_t frozen_indexes{}; bool flush_in_progress{}; std::size_t published_segments{}; GenerationId generation{GenerationId(0)}; };
 class IndexWriter {
  public:
@@ -36,10 +37,11 @@ class IndexWriter {
   [[nodiscard]] std::expected<void,WriterError> compact_published();
   void reclaim(const IndexManifest& obsolete,const IndexManifest& replacement) const;
   std::filesystem::path directory_; index::IndexSchema schema_; IndexWriterOptions options_; ManifestStore store_;
+  WriteAheadLog wal_;
   std::unique_ptr<index::InMemoryIndex> active_; IndexManifest manifest_{GenerationId(0),{}};
   std::map<DocumentId,std::uint64_t> versions_; std::size_t buffered_mutations_{}; std::uint64_t next_segment_id_{1};
   mutable std::mutex mutex_; std::condition_variable condition_; std::deque<index::IndexSnapshot> frozen_;
   std::mutex publication_mutex_;
-  bool worker_busy_{}; bool stopping_{}; std::optional<WriterError> worker_error_; std::thread worker_;
+  bool worker_busy_{}; bool refreshing_{}; bool stopping_{}; std::optional<WriterError> worker_error_; std::thread worker_;
 };
 }  // namespace dse::storage

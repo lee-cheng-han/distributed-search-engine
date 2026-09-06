@@ -43,6 +43,11 @@ and reclaims files only after readers have loaded their owned segment state. Gen
 and compaction currently materialize a fresh in-memory view; streaming merges, compression, and
 memory mapping remain unimplemented.
 
+Every acknowledged mutation is also appended to a checksummed, fsynced write-ahead log. Startup
+replays unpublished versions and `refresh()` checkpoints the log only after durable segment
+publication. Automatic compaction now selects the smallest segment files and replaces only that
+subset, retaining other segments in the next atomic manifest.
+
 ## Application, testing, and operations
 
 `dse_index_cli` can build an in-memory index from deterministic TSV, optionally persist it, or open a
@@ -52,6 +57,7 @@ arbitrary input, segment round trips, and corruption rejection. CI runs the norm
 suites. A libFuzzer-compatible query target exists, although the local Clang installation may require
 separate compiler-runtime packages.
 
-Writer concurrency is bounded and tested, but there is no benchmark harness, measured performance result, network API, sharding,
-replication, cluster membership, cache, metrics exporter, tracing, Docker deployment, or distributed
-behavior yet.
+An in-process shard coordinator provides stable ID routing, parallel fan-out, global BM25 statistics,
+and deterministic global top-K equivalent to a combined-index oracle. It is not a network service:
+there is no RPC, replication, cluster membership, cache, metrics exporter, tracing, Docker
+deployment, or measured benchmark yet.
