@@ -73,6 +73,8 @@ The [segment format](docs/segment_format.md), [current architecture](docs/curren
 [target architecture](docs/target-architecture.md) document the durability boundary and planned evolution.
 Write-ahead recovery is specified in [write_ahead_log.md](docs/write_ahead_log.md), and the
 in-process distributed execution contract is in [local_sharding.md](docs/local_sharding.md).
+The process-boundary transport and ordered replica semantics are documented in
+[rpc_and_replication.md](docs/rpc_and_replication.md).
 
 See [datasets/README.md](datasets/README.md) for the input schema and
 [query_language.md](docs/query_language.md) for syntax.
@@ -90,4 +92,5 @@ See [datasets/README.md](datasets/README.md) for the input schema and
 
 The engine now has crash-replayed writes, bounded asynchronous flushing, size-aware partial
 compaction, safe buffered-reader reclamation, and oracle-equivalent in-process shard fan-out. The
-next major boundary is real deadline-aware RPC between shard processes.
+next major boundary is connection-managed authenticated RPC, persistent replica logs, and snapshot
+transfer for replicas that fall behind retained history.

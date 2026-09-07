@@ -58,6 +58,8 @@ suites. A libFuzzer-compatible query target exists, although the local Clang ins
 separate compiler-runtime packages.
 
 An in-process shard coordinator provides stable ID routing, parallel fan-out, global BM25 statistics,
-and deterministic global top-K equivalent to a combined-index oracle. It is not a network service:
-there is no RPC, replication, cluster membership, cache, metrics exporter, tracing, Docker
-deployment, or measured benchmark yet.
+and deterministic global top-K equivalent to a combined-index oracle. A bounded, deadline-aware
+socket protocol crosses real process boundaries, and ordered idempotent mutation records support a
+primary plus health/lag-aware replicas with retained-log catch-up. Connection management, TLS,
+persistent replica logs, snapshot transfer, consensus, cluster membership, metrics, tracing, Docker
+deployment, and measured benchmarks are not implemented.

@@ -13,6 +13,8 @@ endif()
 
 add_library(dse
   src/distributed/local_cluster.cpp
+  src/distributed/shard_rpc.cpp
+  src/distributed/replication.cpp
   src/analysis/analyzer.cpp
   src/index/document_file.cpp
   src/index/schema.cpp
@@ -97,7 +99,9 @@ if(DSE_BUILD_TESTS)
     tests/unit/query_hardening_test.cpp
     tests/unit/query_parser_test.cpp
     tests/unit/query_planner_test.cpp
+    tests/unit/replication_test.cpp
     tests/unit/schema_test.cpp
+    tests/unit/shard_rpc_test.cpp
     tests/unit/segment_test.cpp
     tests/unit/top_k_test.cpp
     tests/unit/write_ahead_log_test.cpp
