@@ -1,8 +1,8 @@
 # Immutable segment format v1
 
-Version 1.0 is a single packed little-endian `.dseg` file. It is deliberately uncompressed and read
-with buffered I/O so the reference format can be validated before compression or memory mapping is
-introduced.
+Major version 1 is a single packed little-endian `.dseg` file read with buffered I/O. Version 1.0 is
+the fixed-width reference representation. Version 1.1 adds the `compressed-postings` feature flag;
+both representations are readable by the same search path.
 
 ## Layout
 
@@ -16,6 +16,14 @@ Strings are `uint64` byte length followed by uninterpreted bytes. Counts and off
 Terms refer to contiguous posting ranges; postings refer to contiguous position ranges. The checksum
 covers the directory and every section. Schema records include field type/policy/boost, a deterministic
 analyzer descriptor, and a schema fingerprint.
+
+With the v1.1 compression flag, each term instead refers to a byte range in the postings section.
+That range stores variable-byte encoded document-ID deltas followed by term frequency and
+variable-byte position deltas for every posting. The positions section is empty while its directory
+count retains the logical number of positions. Decoders reject overflow, zero document deltas,
+non-increasing positions, non-canonical encodings, truncated values, and unused bytes. The initial
+v1.0 writer remains available through `SegmentWriteOptions`; the durable `IndexWriter` emits v1.1
+compressed segments by default.
 
 ## Compatibility and validation
 

@@ -6,6 +6,7 @@ option(DSE_ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(DSE_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
 option(DSE_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(DSE_BUILD_FUZZERS "Build libFuzzer targets (Clang only)" OFF)
+option(DSE_BUILD_BENCHMARKS "Build deterministic benchmark runner" ON)
 
 if(DSE_ENABLE_TSAN AND (DSE_ENABLE_ASAN OR DSE_ENABLE_UBSAN))
   message(FATAL_ERROR "ThreadSanitizer must be enabled on its own")
@@ -14,12 +15,15 @@ endif()
 add_library(dse
   src/distributed/local_cluster.cpp
   src/distributed/shard_rpc.cpp
+  src/distributed/tcp_transport.cpp
   src/distributed/replication.cpp
+  src/evaluation/metrics.cpp
   src/analysis/analyzer.cpp
   src/index/document_file.cpp
   src/index/schema.cpp
   src/index/in_memory_index.cpp
   src/query/lexer.cpp
+  src/query/cache.cpp
   src/query/executor.cpp
   src/query/parser.cpp
   src/query/planner.cpp
@@ -27,9 +31,11 @@ add_library(dse
   src/ranking/top_k.cpp
   src/storage/segment.cpp
   src/storage/manifest.cpp
+  src/storage/posting_codec.cpp
   src/storage/generation.cpp
   src/storage/index_writer.cpp
   src/storage/write_ahead_log.cpp
+  src/telemetry/metrics.cpp
 )
 add_library(dse::dse ALIAS dse)
 target_compile_features(dse PUBLIC cxx_std_23)
@@ -72,8 +78,24 @@ endif()
 
 add_executable(dse_index_cli apps/index_cli/main.cpp)
 target_link_libraries(dse_index_cli PRIVATE dse::dse)
+add_executable(dse_shard_server apps/shard_server/main.cpp)
+target_link_libraries(dse_shard_server PRIVATE dse::dse)
+add_executable(dse_rpc_client apps/rpc_client/main.cpp)
+target_link_libraries(dse_rpc_client PRIVATE dse::dse)
+if(DSE_BUILD_BENCHMARKS)
+  add_executable(dse_benchmark benchmarks/local_benchmark.cpp)
+  target_link_libraries(dse_benchmark PRIVATE dse::dse)
+  add_executable(dse_cranfield_eval benchmarks/cranfield_evaluation.cpp)
+  target_link_libraries(dse_cranfield_eval PRIVATE dse::dse)
+endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(dse_index_cli PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+  target_compile_options(dse_shard_server PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+  target_compile_options(dse_rpc_client PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+  if(DSE_BUILD_BENCHMARKS)
+    target_compile_options(dse_benchmark PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    target_compile_options(dse_cranfield_eval PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+  endif()
 endif()
 
 if(DSE_BUILD_TESTS)
@@ -89,6 +111,7 @@ if(DSE_BUILD_TESTS)
     tests/unit/analyzer_test.cpp
     tests/unit/bm25_test.cpp
     tests/unit/document_file_test.cpp
+    tests/unit/evaluation_metrics_test.cpp
     tests/unit/generation_test.cpp
     tests/unit/in_memory_index_test.cpp
     tests/unit/index_writer_test.cpp
@@ -97,13 +120,18 @@ if(DSE_BUILD_TESTS)
     tests/unit/query_executor_test.cpp
     tests/unit/query_differential_test.cpp
     tests/unit/query_hardening_test.cpp
+    tests/unit/query_cache_test.cpp
     tests/unit/query_parser_test.cpp
     tests/unit/query_planner_test.cpp
+    tests/unit/posting_codec_test.cpp
     tests/unit/replication_test.cpp
+    tests/unit/replication_persistence_test.cpp
     tests/unit/schema_test.cpp
     tests/unit/shard_rpc_test.cpp
+    tests/unit/tcp_transport_test.cpp
     tests/unit/segment_test.cpp
     tests/unit/top_k_test.cpp
+    tests/unit/metrics_test.cpp
     tests/unit/write_ahead_log_test.cpp
   )
   target_link_libraries(dse_unit_tests PRIVATE dse::dse GTest::gtest_main)

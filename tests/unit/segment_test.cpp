@@ -196,6 +196,34 @@ TEST(Segment, SerializationIsDeterministic) {
   EXPECT_EQ(read_bytes(first.path()), read_bytes(second.path()));
 }
 
+TEST(Segment, CompressedPostingsPreserveResultsAndReduceRepresentativeIndexSize) {
+  TemporarySegment plain;
+  TemporarySegment compressed;
+  dse::index::InMemoryIndex index;
+  for (std::uint32_t number = 0; number < 500U; ++number) {
+    ASSERT_TRUE(index.put({.id = dse::DocumentId("doc-" + std::to_string(number)),
+                           .fields = {{"title", "distributed search"},
+                                      {"body", "search search engine replication durable"}},
+                           .version = 1}));
+  }
+  ASSERT_TRUE(dse::storage::SegmentWriter::write(
+      plain.path(), index.snapshot(), {.segment_id = dse::SegmentId(7)}));
+  ASSERT_TRUE(dse::storage::SegmentWriter::write(
+      compressed.path(), index.snapshot(),
+      {.segment_id = dse::SegmentId(7), .compressed_postings = true}));
+
+  const auto reopened = dse::storage::SegmentReader::open(compressed.path());
+  ASSERT_TRUE(reopened.has_value()) << (reopened ? "" : reopened.error().message);
+  for (const auto query : {"search", "title:\"distributed search\"",
+                           "replication AND durable", "search AND NOT missing"}) {
+    expect_same(search(index, query, 25), search(*reopened, query, 25));
+  }
+  EXPECT_LT(std::filesystem::file_size(compressed.path()),
+            std::filesystem::file_size(plain.path()));
+  EXPECT_EQ(read_bytes(compressed.path())[10], std::byte{1});
+  EXPECT_EQ(read_bytes(compressed.path())[36], std::byte{1});
+}
+
 TEST(Segment, RejectsChecksummedStructuralDirectoryCorruption) {
   TemporarySegment original;
   auto index = populated_index();

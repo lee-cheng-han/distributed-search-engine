@@ -295,4 +295,73 @@ std::expected<SearchResult, ExecutionError> QueryExecutor::search(
   return result;
 }
 
+std::expected<ScoreExplanation, ExecutionError> QueryExecutor::explain(
+    const PlannedQuery& query, const DocumentId& document) const {
+  if (!scorer_) return std::unexpected(error(ExecutionErrorCode::invalid_options,
+                                              std::string(ranking::describe(scorer_.error()))));
+  const auto internal = index_.internal_id(document);
+  if (!internal) return std::unexpected(error(ExecutionErrorCode::invalid_query_tree,
+                                               "cannot explain an unknown document"));
+  const auto build = [&](const auto& self, const PlanNode& node)
+      -> std::expected<ScoreExplanation, ExecutionError> {
+    auto candidates = Evaluator(index_, *scorer_).evaluate(node);
+    if (!candidates) return std::unexpected(candidates.error());
+    const auto found = std::ranges::lower_bound(*candidates, *internal, {}, &Candidate::document_id);
+    ScoreExplanation result;
+    result.description = canonicalize(node);
+    result.node_type = "unknown";
+    result.matched = found != candidates->end() && found->document_id == *internal;
+    if (result.matched) result.score = found->score;
+    const auto append = [&](const Plan& child) -> std::expected<void, ExecutionError> {
+      if (!child) return std::unexpected(error(ExecutionErrorCode::invalid_query_tree,
+                                               "cannot explain an empty plan child"));
+      auto explained = self(self, *child);
+      if (!explained) return std::unexpected(explained.error());
+      result.children.push_back(std::move(*explained));
+      return {};
+    };
+    auto children = std::visit([&](const auto& value) -> std::expected<void, ExecutionError> {
+      using T = std::decay_t<decltype(value)>;
+      if constexpr (std::same_as<T, PlannedTerm>) {
+        result.node_type = "term"; result.field = value.field; result.term = value.term;
+        result.boost = value.boost;
+        const auto statistics = index_.field_statistics(value.field);
+        result.corpus_documents = statistics.document_count;
+        result.average_field_length = statistics.average_length;
+        if (const auto* entry = index_.lookup(value.field, value.term); entry != nullptr) {
+          result.document_frequency = entry->document_frequency;
+          if (const auto* posting = posting_for(*entry, *internal); posting != nullptr)
+            result.term_frequency = posting->term_frequency;
+        }
+        if (const auto* record = index_.document(*internal); record != nullptr) {
+          const auto length = record->field_lengths.find(value.field);
+          if (length != record->field_lengths.end()) result.document_length = length->second;
+        }
+      } else if constexpr (std::same_as<T, PlannedPhrase>) {
+        result.node_type = "phrase"; result.field = value.field; result.boost = value.boost;
+        for (const auto& token : value.tokens) {
+          const PlanNode term_node{PlannedTerm{value.field, token.term, value.boost}, 0};
+          auto explained = self(self, term_node);
+          if (!explained) return std::unexpected(explained.error());
+          result.children.push_back(std::move(*explained));
+        }
+      } else if constexpr (std::same_as<T, PlannedAnd> || std::same_as<T, PlannedOr>) {
+        result.node_type = std::same_as<T, PlannedAnd> ? "and" : "or";
+        for (const auto& child : value.children) if (auto added = append(child); !added) return added;
+      } else if constexpr (std::same_as<T, PlannedNot>) {
+        result.node_type = "not";
+        if (auto added = append(value.operand); !added) return added;
+      } else if constexpr (std::same_as<T, PlannedRange>) {
+        result.node_type = "range"; result.field = value.field;
+      } else if constexpr (std::same_as<T, PlannedMatchAll>) {
+        result.node_type = "match_all";
+      }
+      return {};
+    }, node.value);
+    if (!children) return std::unexpected(children.error());
+    return result;
+  };
+  return build(build, query.root());
+}
+
 }  // namespace dse::query

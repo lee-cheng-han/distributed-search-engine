@@ -42,10 +42,12 @@ class GenerationView final : public index::SearchIndexView {
 class SegmentMerger {
  public:
   [[nodiscard]] static std::expected<ManifestSegment, GenerationError> merge(
-      const GenerationView& generation, const std::filesystem::path& directory, SegmentId output_id);
+      const GenerationView& generation, const std::filesystem::path& directory, SegmentId output_id,
+      bool compressed_postings = false);
   [[nodiscard]] static std::expected<ManifestSegment, GenerationError> merge_segments(
       const std::vector<std::shared_ptr<const SegmentReader>>& segments,
-      const std::filesystem::path& directory, SegmentId output_id);
+      const std::filesystem::path& directory, SegmentId output_id,
+      bool compressed_postings = false);
 };
 
 }  // namespace dse::storage

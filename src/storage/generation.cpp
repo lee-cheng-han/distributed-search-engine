@@ -46,16 +46,19 @@ std::expected<GenerationView, GenerationError> GenerationView::open(OpenGenerati
 }
 
 std::expected<ManifestSegment, GenerationError> SegmentMerger::merge(
-    const GenerationView& generation, const std::filesystem::path& directory, SegmentId output_id) {
+    const GenerationView& generation, const std::filesystem::path& directory, SegmentId output_id,
+    bool compressed_postings) {
   const std::string filename = "segment-" + std::to_string(output_id.value()) + ".dseg";
-  const auto result = SegmentWriter::write(directory / filename, generation.snapshot(), {.segment_id = output_id});
+  const auto result = SegmentWriter::write(directory / filename, generation.snapshot(),
+                                           {.segment_id = output_id,
+                                            .compressed_postings = compressed_postings});
   if (!result) return std::unexpected(error(GenerationErrorCode::segment_error, result.error().message));
   return ManifestSegment{output_id, filename};
 }
 
 std::expected<ManifestSegment, GenerationError> SegmentMerger::merge_segments(
     const std::vector<std::shared_ptr<const SegmentReader>>& segments,
-    const std::filesystem::path& directory, SegmentId output_id) {
+    const std::filesystem::path& directory, SegmentId output_id, bool compressed_postings) {
   if (segments.empty()) return std::unexpected(error(GenerationErrorCode::empty_generation, "merge has no segments"));
   const auto& schema = segments.front()->schema();
   index::InMemoryIndex resolved(schema);
@@ -75,7 +78,9 @@ std::expected<ManifestSegment, GenerationError> SegmentMerger::merge_segments(
     if (!inserted) return std::unexpected(error(GenerationErrorCode::invalid_document, inserted.error().message));
   }
   const std::string filename = "segment-" + std::to_string(output_id.value()) + ".dseg";
-  auto written = SegmentWriter::write(directory / filename, resolved.snapshot(), {.segment_id=output_id});
+  auto written = SegmentWriter::write(directory / filename, resolved.snapshot(),
+                                      {.segment_id = output_id,
+                                       .compressed_postings = compressed_postings});
   if (!written) return std::unexpected(error(GenerationErrorCode::segment_error, written.error().message));
   return ManifestSegment{output_id, filename};
 }

@@ -27,6 +27,7 @@ struct SegmentError {
 
 struct SegmentWriteOptions {
   SegmentId segment_id{SegmentId(1)};
+  bool compressed_postings{false};
 };
 
 struct SegmentReadLimits {

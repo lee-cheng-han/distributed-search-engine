@@ -149,4 +149,35 @@ TEST_F(QueryExecutorTest, RejectsInvalidOptionsAndMalformedAstNodes) {
   EXPECT_EQ(invalid_tree.error().code, dse::query::ExecutionErrorCode::invalid_query_tree);
 }
 
+TEST_F(QueryExecutorTest, ExplainsExactProductionScoreWithoutChangingSearch) {
+  auto parsed = dse::query::parse("title:distributed^2 OR body:systems");
+  ASSERT_TRUE(parsed);
+  auto plan = dse::query::QueryPlanner(index).plan(**parsed);
+  ASSERT_TRUE(plan);
+  auto result = executor.search(*plan, 10);
+  ASSERT_TRUE(result);
+  const auto hit = std::ranges::find(result->hits, dse::DocumentId("a"),
+                                     &dse::query::SearchHit::document_id);
+  ASSERT_NE(hit, result->hits.end());
+  auto explanation = executor.explain(*plan, dse::DocumentId("a"));
+  ASSERT_TRUE(explanation);
+  EXPECT_TRUE(explanation->matched);
+  EXPECT_DOUBLE_EQ(explanation->score, hit->score);
+  EXPECT_EQ(explanation->node_type, "or");
+  EXPECT_EQ(explanation->children.size(), 2U);
+  const auto term = std::ranges::find(explanation->children, "distributed",
+                                      &dse::query::ScoreExplanation::term);
+  ASSERT_NE(term, explanation->children.end());
+  EXPECT_EQ(term->field, "title");
+  EXPECT_EQ(term->term_frequency, 1U);
+  EXPECT_EQ(term->document_frequency, 2U);
+  EXPECT_EQ(term->corpus_documents, 4U);
+  EXPECT_GT(term->average_field_length, 0.0);
+  EXPECT_DOUBLE_EQ(term->boost, 2.0);
+  auto miss = executor.explain(*plan, dse::DocumentId("d"));
+  ASSERT_TRUE(miss);
+  EXPECT_FALSE(miss->matched);
+  EXPECT_DOUBLE_EQ(miss->score, 0.0);
+}
+
 }  // namespace

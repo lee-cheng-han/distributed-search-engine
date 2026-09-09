@@ -30,6 +30,22 @@ struct SearchResult {
   std::size_t total_hits{};
 };
 
+struct ScoreExplanation {
+  std::string description;
+  std::string node_type;
+  std::string field;
+  std::string term;
+  bool matched{};
+  double score{};
+  std::size_t corpus_documents{};
+  std::size_t document_frequency{};
+  std::uint32_t term_frequency{};
+  std::uint32_t document_length{};
+  double average_field_length{};
+  double boost{1.0};
+  std::vector<ScoreExplanation> children;
+};
+
 enum class ExecutionErrorCode {
   invalid_options,
   planning_error,
@@ -54,6 +70,8 @@ class QueryExecutor {
       const QueryNode& query, const SearchOptions& options = {}) const;
   [[nodiscard]] std::expected<SearchResult, ExecutionError> search(
       const PlannedQuery& query, std::size_t top_k = 10) const;
+  [[nodiscard]] std::expected<ScoreExplanation, ExecutionError> explain(
+      const PlannedQuery& query, const DocumentId& document) const;
 
  private:
   const index::SearchIndexView& index_;

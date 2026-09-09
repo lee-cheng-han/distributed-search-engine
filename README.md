@@ -10,7 +10,9 @@ fields, deduplicates equivalent clauses, and orders conjunctions using posting-l
 execution. Seeded differential tests compare that optimized path against an independent
 document-at-a-time reference evaluator. A local CLI provides a complete ingestion-to-ranked-results
 path. The index can be serialized into a checksummed immutable segment and reopened in a later
-process without rebuilding postings or reanalyzing documents.
+process without rebuilding postings or reanalyzing documents. Versioned delta/variable-byte posting
+compression, a generation-aware byte-bounded result cache, and exact score explanations extend the
+local search path.
 Fields are schema-validated with owned per-field analyzers, exact keyword tags, and typed ISO dates.
 Posting lists and execution use compact segment-local `uint32_t` document IDs while APIs preserve
 external string IDs and deterministic external-ID tie-breaking.
@@ -74,7 +76,15 @@ The [segment format](docs/segment_format.md), [current architecture](docs/curren
 Write-ahead recovery is specified in [write_ahead_log.md](docs/write_ahead_log.md), and the
 in-process distributed execution contract is in [local_sharding.md](docs/local_sharding.md).
 The process-boundary transport and ordered replica semantics are documented in
-[rpc_and_replication.md](docs/rpc_and_replication.md).
+[rpc_and_replication.md](docs/rpc_and_replication.md). The runnable bounded TCP service and container
+deployment are in [network_service.md](docs/network_service.md); replica restart behavior and metrics
+are in [replica_recovery.md](docs/replica_recovery.md) and [observability.md](docs/observability.md).
+
+Release-mode raw measurements are checked in under `benchmarks/results`. On the recorded 5,000-document
+synthetic run, compressed segments were 58.0% of the fixed-width size and search latency was 369 µs
+p50 / 650 µs p95 / 950 µs p99. The public Cranfield run over 1,400 documents and 225 queries measured
+MAP@100 0.2787, MRR@100 0.5359, recall@100 0.7020, and nDCG@100 0.4434. These are single-host baseline
+runs, not universal performance claims; workload and environment metadata live beside the results.
 
 See [datasets/README.md](datasets/README.md) for the input schema and
 [query_language.md](docs/query_language.md) for syntax.
@@ -92,5 +102,6 @@ See [datasets/README.md](datasets/README.md) for the input schema and
 
 The engine now has crash-replayed writes, bounded asynchronous flushing, size-aware partial
 compaction, safe buffered-reader reclamation, and oracle-equivalent in-process shard fan-out. The
-next major boundary is connection-managed authenticated RPC, persistent replica logs, and snapshot
-transfer for replicas that fall behind retained history.
+network boundary now includes a bounded TCP worker service, client, container image, and two-process
+Compose demonstration. Authentication/TLS, a true distributed coordinator process, and snapshot
+transfer for replicas that fall behind retained history remain future work.

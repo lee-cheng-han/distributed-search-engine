@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "seed": 219540062,
+  "documents": 5000,
+  "tokens_per_document": 20,
+  "queries": 200,
+  "compiler": "15.2.0",
+  "hardware_threads": 12,
+  "indexing_seconds": 22.08799671,
+  "indexing_documents_per_second": 226.3672919,
+  "query_latency_us": {"p50": 368.67, "p95": 650.569, "p99": 949.714},
+  "cache_hit_average_ns": 65.9343,
+  "uncompressed_segment_bytes": 6481341,
+  "compressed_segment_bytes": 3760065,
+  "compression_ratio": 0.5801368883,
+  "result_hit_checksum": 19680
+}

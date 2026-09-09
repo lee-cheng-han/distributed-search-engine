@@ -40,7 +40,7 @@ bounded frozen queue, publishes it on a dedicated background worker, applies pro
 and makes `refresh()` a durability barrier. It recovers version state after restart, resolves latest
 versions and tombstones across segments, automatically compacts at a configurable segment count,
 and reclaims files only after readers have loaded their owned segment state. Generation resolution
-and compaction currently materialize a fresh in-memory view; streaming merges, compression, and
+and compaction currently materialize a fresh in-memory view; streaming merges and
 memory mapping remain unimplemented.
 
 Every acknowledged mutation is also appended to a checksummed, fsynced write-ahead log. Startup
@@ -59,7 +59,10 @@ separate compiler-runtime packages.
 
 An in-process shard coordinator provides stable ID routing, parallel fan-out, global BM25 statistics,
 and deterministic global top-K equivalent to a combined-index oracle. A bounded, deadline-aware
-socket protocol crosses real process boundaries, and ordered idempotent mutation records support a
-primary plus health/lag-aware replicas with retained-log catch-up. Connection management, TLS,
-persistent replica logs, snapshot transfer, consensus, cluster membership, metrics, tracing, Docker
-deployment, and measured benchmarks are not implemented.
+socket protocol crosses real process boundaries through a fixed worker pool and bounded admission
+queue. A standalone shard server, client, container image, and two-node Compose demonstration are
+included. Ordered idempotent mutation records support a primary plus health/lag-aware replicas;
+checksummed fsynced replica logs can reconstruct a searchable ordered replica after restart.
+Thread-safe Prometheus-format counters, gauges, and histograms instrument the TCP boundary. TLS,
+authentication, snapshot transfer, consensus, automatic membership, and distributed tracing are not
+implemented. Reproducible synthetic performance and public Cranfield relevance baselines are checked in.

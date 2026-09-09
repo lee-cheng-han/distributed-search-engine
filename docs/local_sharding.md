@@ -10,5 +10,8 @@ returns at most the requested K; the coordinator sums exact hit counts and appli
 score/ID top-K ordering. Differential tests require scores and results to match one combined-index
 oracle to `1e-12`.
 
-This is an in-process qualification layer, not network distribution. It has no RPC protocol,
-deadline, cancellation, shard-map epoch, replication, membership, or failure policy yet.
+This remains the authoritative global-scoring qualification layer. A separate TCP protocol and
+bounded shard service now cross process boundaries, but the protocol currently sends a query rather
+than the coordinator's full global-scoring context. Therefore the repository does not yet claim that
+arbitrary network-partitioned shards preserve the same global scores. Shard-map epochs, automatic
+membership, and a cross-process coordinator remain future work.

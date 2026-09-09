@@ -1,6 +1,7 @@
 #include "dse/storage/segment.hpp"
 
 #include "dse/analysis/analyzer.hpp"
+#include "dse/storage/posting_codec.hpp"
 
 #include <algorithm>
 #include <array>
@@ -29,7 +30,8 @@ constexpr std::array<std::byte, 8> kMagic{std::byte{'D'}, std::byte{'S'}, std::b
                                           std::byte{'S'}, std::byte{'E'}, std::byte{'G'},
                                           std::byte{'0'}, std::byte{'1'}};
 constexpr std::uint16_t kMajor = 1;
-constexpr std::uint16_t kMinor = 0;
+constexpr std::uint16_t kMaximumMinor = 1;
+constexpr std::uint32_t kCompressedPostings = 1U;
 constexpr std::uint32_t kHeaderBytes = 64;
 constexpr std::uint32_t kDirectoryEntryBytes = 32;
 constexpr std::uint32_t kSectionCount = 6;
@@ -173,20 +175,39 @@ Bytes encode_statistics(const index::IndexSnapshot& snapshot) {
 
 struct EncodedIndex { Bytes terms; Bytes postings; Bytes positions; std::uint64_t term_count{}; std::uint64_t posting_count{}; std::uint64_t position_count{}; };
 
-EncodedIndex encode_index(const index::IndexSnapshot& snapshot) {
+EncodedIndex encode_index(const index::IndexSnapshot& snapshot, bool compressed) {
   EncodedIndex result;
   for (const auto& [field, dictionary] : snapshot.fields()) {
     for (const auto& [term, entry] : dictionary) {
+      const auto posting_start = compressed ? result.postings.size() : result.posting_count;
+      ++result.term_count;
+      std::uint32_t previous_document{};
+      for (const auto& posting : entry.postings) {
+        if (compressed) {
+          VariableByteCodec::encode(posting.document_id.value() - previous_document,
+                                    result.postings.data());
+          VariableByteCodec::encode(posting.term_frequency, result.postings.data());
+          std::uint32_t previous_position{};
+          for (const auto position : posting.positions) {
+            VariableByteCodec::encode(position - previous_position, result.postings.data());
+            previous_position = position;
+          }
+          previous_document = posting.document_id.value();
+        } else {
+          result.postings.u32(posting.document_id.value()); result.postings.u32(posting.term_frequency);
+          result.postings.u64(result.position_count); result.postings.u64(posting.positions.size());
+        }
+        ++result.posting_count;
+        for (const auto position : posting.positions) {
+          if (!compressed) result.positions.u32(position);
+          ++result.position_count;
+        }
+      }
       result.terms.string(field); result.terms.string(term);
       result.terms.u32(entry.document_frequency); result.terms.u32(0);
-      result.terms.u64(result.posting_count); result.terms.u64(entry.postings.size());
-      ++result.term_count;
-      for (const auto& posting : entry.postings) {
-        result.postings.u32(posting.document_id.value()); result.postings.u32(posting.term_frequency);
-        result.postings.u64(result.position_count); result.postings.u64(posting.positions.size());
-        ++result.posting_count;
-        for (const auto position : posting.positions) { result.positions.u32(position); ++result.position_count; }
-      }
+      result.terms.u64(posting_start);
+      result.terms.u64(compressed ? result.postings.size() - posting_start
+                                  : entry.postings.size());
     }
   }
   return result;
@@ -282,7 +303,7 @@ std::expected<void, SegmentError> SegmentWriter::write(const std::filesystem::pa
                                                        const index::IndexSnapshot& snapshot,
                                                        const SegmentWriteOptions& options) {
   if (path.empty() || options.segment_id.value() == 0U) return std::unexpected(fail(SegmentErrorCode::invalid_snapshot, "segment path and ID must be non-empty"));
-  auto encoded = encode_index(snapshot);
+  auto encoded = encode_index(snapshot, options.compressed_postings);
   std::vector<SectionData> sections;
   sections.push_back({Section::schema, encode_schema(snapshot.schema()), snapshot.schema().fields().size()});
   sections.push_back({Section::documents, encode_documents(snapshot), snapshot.documents().size()});
@@ -302,10 +323,11 @@ std::expected<void, SegmentError> SegmentWriter::write(const std::filesystem::pa
   }
   std::copy(kMagic.begin(), kMagic.end(), file.data().begin());
   file.data()[8] = static_cast<std::byte>(kMajor & 0xffU); file.data()[9] = static_cast<std::byte>(kMajor >> 8U);
-  file.data()[10] = static_cast<std::byte>(kMinor & 0xffU); file.data()[11] = static_cast<std::byte>(kMinor >> 8U);
+  const std::uint16_t minor = options.compressed_postings ? 1U : 0U;
+  file.data()[10] = static_cast<std::byte>(minor & 0xffU); file.data()[11] = static_cast<std::byte>(minor >> 8U);
   overwrite_u32(file.data(), 12, kHeaderBytes); overwrite_u64(file.data(), 16, file.size());
   overwrite_u64(file.data(), 24, options.segment_id.value()); overwrite_u32(file.data(), 32, kSectionCount);
-  overwrite_u32(file.data(), 36, 0); overwrite_u32(file.data(), 40, crc32c(std::span(file.data()).subspan(kHeaderBytes)));
+  overwrite_u32(file.data(), 36, options.compressed_postings ? kCompressedPostings : 0U); overwrite_u32(file.data(), 40, crc32c(std::span(file.data()).subspan(kHeaderBytes)));
 
   auto temporary = path; temporary += ".tmp";
   std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
@@ -346,7 +368,9 @@ std::expected<SegmentReader, SegmentError> SegmentReader::open(const std::filesy
   auto major = header.u16(); auto minor = header.u16(); auto header_size = header.u32(); auto recorded_size = header.u64(); auto segment_id = header.u64(); auto section_count = header.u32(); auto flags = header.u32(); auto checksum = header.u32();
   if (!major || !minor || !header_size || !recorded_size || !segment_id || !section_count || !flags || !checksum) return std::unexpected(fail(SegmentErrorCode::corruption, "truncated segment header"));
   if (*major != kMajor) return std::unexpected(fail(SegmentErrorCode::unsupported_version, "unsupported segment major version"));
-  if (*minor > kMinor || *flags != 0U) return std::unexpected(fail(SegmentErrorCode::unsupported_version, "unsupported segment features"));
+  if (*minor > kMaximumMinor || (*flags & ~kCompressedPostings) != 0U ||
+      ((*flags & kCompressedPostings) != 0U && *minor < 1U))
+    return std::unexpected(fail(SegmentErrorCode::unsupported_version, "unsupported segment features"));
   if (*header_size != kHeaderBytes || *recorded_size != file_size || *segment_id == 0U || *section_count != kSectionCount) return std::unexpected(fail(SegmentErrorCode::corruption, "invalid segment header values"));
   if (std::ranges::any_of(std::span<const std::byte>(bytes).subspan(44, 20),
                           [](std::byte value) { return value != std::byte{}; }))
@@ -398,13 +422,43 @@ std::expected<SegmentReader, SegmentError> SegmentReader::open(const std::filesy
   for (std::uint64_t i = 0; i < *stats_count; ++i) { auto field = stats.string(); auto count = stats.u64(); auto total = stats.u64(); if (!field || !count || !total || *count == 0U || !statistics.emplace(std::move(*field), index::FieldStatistics{static_cast<std::size_t>(*count), *total, static_cast<double>(*total) / static_cast<double>(*count)}).second) return std::unexpected(fail(SegmentErrorCode::corruption, "invalid field statistics")); }
   if (!stats.done()) return std::unexpected(fail(SegmentErrorCode::corruption, "trailing statistics data"));
 
-  const auto& position_slice = slices.at(Section::positions); if (position_slice.count > limits.maximum_positions || position_slice.bytes.size() != position_slice.count * 4U) return std::unexpected(fail(SegmentErrorCode::resource_limit, "invalid position section size"));
-  std::vector<std::uint32_t> positions; positions.reserve(static_cast<std::size_t>(position_slice.count)); Cursor pos(position_slice.bytes, limits); for (std::uint64_t i = 0; i < position_slice.count; ++i) { auto value = pos.u32(); if (!value) return std::unexpected(value.error()); positions.push_back(*value); }
+  const bool compressed = (*flags & kCompressedPostings) != 0U;
+  const auto& position_slice = slices.at(Section::positions); if (position_slice.count > limits.maximum_positions || (!compressed && (position_slice.count > std::numeric_limits<std::uint64_t>::max() / 4U || position_slice.bytes.size() != position_slice.count * 4U)) || (compressed && !position_slice.bytes.empty())) return std::unexpected(fail(SegmentErrorCode::resource_limit, "invalid position section size"));
+  std::vector<std::uint32_t> positions; if (!compressed) { positions.reserve(static_cast<std::size_t>(position_slice.count)); Cursor pos(position_slice.bytes, limits); for (std::uint64_t i = 0; i < position_slice.count; ++i) { auto value = pos.u32(); if (!value) return std::unexpected(value.error()); positions.push_back(*value); } }
   struct RawPosting { std::uint32_t document; std::uint32_t frequency; std::uint64_t start; std::uint64_t count; };
-  const auto& posting_slice = slices.at(Section::postings); if (posting_slice.count > limits.maximum_postings || posting_slice.bytes.size() != posting_slice.count * 24U) return std::unexpected(fail(SegmentErrorCode::resource_limit, "invalid posting section size"));
-  std::vector<RawPosting> postings; postings.reserve(static_cast<std::size_t>(posting_slice.count)); Cursor posting_cursor(posting_slice.bytes, limits); for (std::uint64_t i = 0; i < posting_slice.count; ++i) { auto document = posting_cursor.u32(); auto frequency = posting_cursor.u32(); auto start = posting_cursor.u64(); auto count = posting_cursor.u64(); if (!document || !frequency || !start || !count || *frequency != *count || *start > positions.size() || *count > positions.size() - *start) return std::unexpected(fail(SegmentErrorCode::corruption, "invalid posting record")); postings.push_back({*document, *frequency, *start, *count}); }
+  const auto& posting_slice = slices.at(Section::postings); if (posting_slice.count > limits.maximum_postings || (!compressed && (posting_slice.count > std::numeric_limits<std::uint64_t>::max() / 24U || posting_slice.bytes.size() != posting_slice.count * 24U))) return std::unexpected(fail(SegmentErrorCode::resource_limit, "invalid posting section size"));
+  std::vector<RawPosting> postings; if (!compressed) { postings.reserve(static_cast<std::size_t>(posting_slice.count)); Cursor posting_cursor(posting_slice.bytes, limits); for (std::uint64_t i = 0; i < posting_slice.count; ++i) { auto document = posting_cursor.u32(); auto frequency = posting_cursor.u32(); auto start = posting_cursor.u64(); auto count = posting_cursor.u64(); if (!document || !frequency || !start || !count || *frequency != *count || *start > positions.size() || *count > positions.size() - *start) return std::unexpected(fail(SegmentErrorCode::corruption, "invalid posting record")); postings.push_back({*document, *frequency, *start, *count}); } }
   index::FieldDictionaries fields; const auto& term_slice = slices.at(Section::terms); if (term_slice.count > limits.maximum_terms) return std::unexpected(fail(SegmentErrorCode::resource_limit, "term count limit exceeded")); Cursor terms(term_slice.bytes, limits);
-  for (std::uint64_t i = 0; i < term_slice.count; ++i) { auto field = terms.string(); auto term = terms.string(); auto frequency = terms.u32(); auto reserved = terms.u32(); auto start = terms.u64(); auto count = terms.u64(); if (!field || !term || !frequency || !reserved || !start || !count || *reserved != 0U || term->empty() || *frequency != *count || *start > postings.size() || *count > postings.size() - *start) return std::unexpected(fail(SegmentErrorCode::corruption, "invalid term record")); index::TermEntry entry{*frequency, {}}; entry.postings.reserve(static_cast<std::size_t>(*count)); for (std::uint64_t j = 0; j < *count; ++j) { const auto& raw = postings[static_cast<std::size_t>(*start + j)]; std::vector<std::uint32_t> posting_positions(positions.begin() + static_cast<std::ptrdiff_t>(raw.start), positions.begin() + static_cast<std::ptrdiff_t>(raw.start + raw.count)); entry.postings.push_back({InternalDocumentId(raw.document), raw.frequency, std::move(posting_positions)}); } if (!fields[*field].emplace(std::move(*term), std::move(entry)).second) return std::unexpected(fail(SegmentErrorCode::corruption, "duplicate segment term")); }
+  std::uint64_t decoded_posting_count{}; std::uint64_t decoded_position_count{}; std::uint64_t expected_compressed_offset{};
+  for (std::uint64_t i = 0; i < term_slice.count; ++i) { auto field = terms.string(); auto term = terms.string(); auto frequency = terms.u32(); auto reserved = terms.u32(); auto start = terms.u64(); auto count = terms.u64(); if (!field || !term || !frequency || !reserved || !start || !count || *reserved != 0U || term->empty() || *frequency == 0U) return std::unexpected(fail(SegmentErrorCode::corruption, "invalid term record")); index::TermEntry entry{*frequency, {}};
+    if (compressed) {
+      if (*start != expected_compressed_offset || *start > posting_slice.bytes.size() || *count > posting_slice.bytes.size() - *start) return std::unexpected(fail(SegmentErrorCode::corruption, "invalid compressed posting range"));
+      const auto encoded = posting_slice.bytes.subspan(static_cast<std::size_t>(*start), static_cast<std::size_t>(*count)); std::size_t offset{}; std::uint32_t previous_document{}; entry.postings.reserve(*frequency);
+      for (std::uint32_t j=0;j<*frequency;++j) { auto document_delta=VariableByteCodec::decode(encoded,offset); auto term_frequency=VariableByteCodec::decode(encoded,offset); if(!document_delta||!term_frequency||*document_delta==0U||*document_delta>std::numeric_limits<std::uint32_t>::max()-previous_document||*term_frequency==0U||decoded_position_count>limits.maximum_positions||*term_frequency>limits.maximum_positions-decoded_position_count)return std::unexpected(fail(SegmentErrorCode::corruption,"invalid compressed posting")); const auto document=previous_document+*document_delta; previous_document=document; std::vector<std::uint32_t> posting_positions;posting_positions.reserve(*term_frequency);std::uint32_t previous_position{};for(std::uint32_t k=0;k<*term_frequency;++k){auto delta=VariableByteCodec::decode(encoded,offset);if(!delta||(k!=0U&&*delta==0U)||*delta>std::numeric_limits<std::uint32_t>::max()-previous_position)return std::unexpected(fail(SegmentErrorCode::corruption,"invalid compressed position"));previous_position+=*delta;posting_positions.push_back(previous_position);}entry.postings.push_back({InternalDocumentId(document),*term_frequency,std::move(posting_positions)});++decoded_posting_count;decoded_position_count+=*term_frequency;}
+      if (offset != encoded.size())
+        return std::unexpected(fail(SegmentErrorCode::corruption,
+                                    "trailing compressed posting bytes"));
+      if (*count > std::numeric_limits<std::uint64_t>::max() - expected_compressed_offset)
+        return std::unexpected(fail(SegmentErrorCode::corruption,
+                                    "compressed posting offset overflow"));
+      expected_compressed_offset += *count;
+    } else {
+      if (*frequency != *count || *start > postings.size() ||
+          *count > postings.size() - *start)
+        return std::unexpected(fail(SegmentErrorCode::corruption,
+                                    "invalid term posting range"));
+      entry.postings.reserve(static_cast<std::size_t>(*count));
+      for (std::uint64_t j = 0; j < *count; ++j) {
+        const auto& raw = postings[static_cast<std::size_t>(*start + j)];
+        std::vector<std::uint32_t> posting_positions(
+            positions.begin() + static_cast<std::ptrdiff_t>(raw.start),
+            positions.begin() + static_cast<std::ptrdiff_t>(raw.start + raw.count));
+        entry.postings.push_back(
+            {InternalDocumentId(raw.document), raw.frequency, std::move(posting_positions)});
+      }
+    }
+    if (!fields[*field].emplace(std::move(*term), std::move(entry)).second) return std::unexpected(fail(SegmentErrorCode::corruption, "duplicate segment term")); }
+  if (compressed && (expected_compressed_offset != posting_slice.bytes.size() || decoded_posting_count != posting_slice.count || decoded_position_count != position_slice.count)) return std::unexpected(fail(SegmentErrorCode::corruption,"compressed section count mismatch"));
   if (!terms.done()) return std::unexpected(fail(SegmentErrorCode::corruption, "trailing term data"));
   SegmentReader reader(SegmentId(*segment_id), std::move(*schema), std::move(fields), std::move(documents), std::move(external_ids), std::move(statistics)); std::string reason; if (!reader.validate_invariants(&reason)) return std::unexpected(fail(SegmentErrorCode::corruption, "segment invariant failed: " + reason)); return reader;
 }

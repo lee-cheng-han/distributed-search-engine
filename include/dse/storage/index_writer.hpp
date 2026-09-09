@@ -14,7 +14,7 @@
 namespace dse::storage {
 enum class WriterErrorCode { index_error, storage_error, stale_version, closed };
 struct WriterError { WriterErrorCode code; std::string message; };
-struct IndexWriterOptions { std::size_t maximum_buffered_mutations{10'000}; std::size_t maximum_frozen_indexes{2}; std::size_t automatic_merge_segment_count{8}; std::size_t merge_width{4}; bool reclaim_obsolete_files{true}; };
+struct IndexWriterOptions { std::size_t maximum_buffered_mutations{10'000}; std::size_t maximum_frozen_indexes{2}; std::size_t automatic_merge_segment_count{8}; std::size_t merge_width{4}; bool reclaim_obsolete_files{true}; bool compressed_segments{true}; };
 struct IndexWriterStatistics { std::size_t buffered_mutations{}; std::size_t frozen_indexes{}; bool flush_in_progress{}; std::size_t published_segments{}; GenerationId generation{GenerationId(0)}; };
 class IndexWriter {
  public:

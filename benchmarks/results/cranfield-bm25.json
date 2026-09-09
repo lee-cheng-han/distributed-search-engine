@@ -1,0 +1,12 @@
+{
+  "dataset": "Cranfield 1400",
+  "documents": 1400,
+  "queries": 225,
+  "qrels": 1837,
+  "top_k": 100,
+  "macro_precision_at_k": 0.04751111111,
+  "macro_recall_at_k": 0.7020244115,
+  "map_at_k": 0.2786655965,
+  "mrr_at_k": 0.535938641,
+  "macro_ndcg_at_k": 0.4434377849
+}

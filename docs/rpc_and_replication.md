@@ -20,6 +20,13 @@ Read routing excludes unhealthy and draining replicas and replicas beyond the pe
 prefers healthy over suspect, then lower lag, lower in-flight work, and finally node ID for stable
 ties.
 
-The current RPC API serves one request on an already connected socket. Connection management, TLS,
-authentication, multiplexing, cancellation propagation, persistent mutation-log storage, elections,
-quorum consensus, and snapshot transfer remain future work.
+`TcpShardServer` owns a listener, bounded admission queue, fixed worker pool, and per-request deadline;
+`TcpShardClient` performs deadline-aware address resolution/connect and one search. The standalone
+server and client expose this path to containers and separate hosts. Connections currently carry one
+request and excess admitted work is rejected by closing the connection. TLS, authentication,
+multiplexing, and cancellation propagation remain future work.
+
+`PersistentMutationLog` stores the full ordered mutation in checksummed fsynced records and repairs
+only torn tails. A restarted replica can replay the log, or restore a verified compressed segment
+snapshot whose segment ID is its applied sequence before accepting subsequent catch-up records.
+Atomic log-prefix truncation, elections, and quorum consensus are not implemented.

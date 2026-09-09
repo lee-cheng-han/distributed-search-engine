@@ -1,0 +1,38 @@
+services:
+  index-builder:
+    build: .
+    entrypoint: ["dse_index_cli"]
+    command: ["--documents", "/usr/local/share/dse/sample.tsv", "--write-segment", "/data/sample.dseg"]
+    volumes: ["index-data:/data"]
+    restart: "no"
+
+  shard-a:
+    build: .
+    command: ["--segment", "/data/sample.dseg", "--port", "9090"]
+    volumes: ["index-data:/data:ro"]
+    depends_on:
+      index-builder:
+        condition: service_completed_successfully
+    ports: ["9090:9090"]
+    healthcheck:
+      test: ["CMD", "dse_rpc_client", "--host", "127.0.0.1", "--port", "9090", "--query", "*"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  shard-b:
+    build: .
+    command: ["--segment", "/data/sample.dseg", "--port", "9090"]
+    volumes: ["index-data:/data:ro"]
+    depends_on:
+      index-builder:
+        condition: service_completed_successfully
+    ports: ["9091:9090"]
+    healthcheck:
+      test: ["CMD", "dse_rpc_client", "--host", "127.0.0.1", "--port", "9090", "--query", "*"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+volumes:
+  index-data:

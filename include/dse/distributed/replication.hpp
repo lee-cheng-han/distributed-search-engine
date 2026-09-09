@@ -1,5 +1,7 @@
 #pragma once
 #include "dse/index/in_memory_index.hpp"
+#include "dse/storage/write_ahead_log.hpp"
+#include "dse/storage/segment.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -24,6 +26,9 @@ class OrderedReplica {
   void set_inflight(std::size_t inflight)noexcept{inflight_=inflight;}
   [[nodiscard]] const index::InMemoryIndex& index()const noexcept{return index_;}
   [[nodiscard]] const NodeId& node_id()const noexcept{return node_;}
+  [[nodiscard]] static std::expected<std::unique_ptr<OrderedReplica>,ReplicationError> restore(
+      NodeId node, ShardId shard, std::uint64_t epoch,
+      const storage::SegmentReader& snapshot);
  private:NodeId node_;ShardId shard_;std::uint64_t epoch_;index::InMemoryIndex index_;std::uint64_t applied_sequence_{};NodeHealth health_{NodeHealth::healthy};std::size_t inflight_{};std::map<std::string,MutationRecord,std::less<>> operations_;
 };
 class ReplicaRouter { public:[[nodiscard]] static std::expected<NodeId,ReplicationError> select(const std::vector<ReplicaStatus>& replicas,std::uint64_t maximum_lag); };
@@ -41,4 +46,22 @@ class ReplicationGroup {
   ReplicationGroup(ShardId shard,std::uint64_t epoch,std::vector<NodeId> nodes,std::size_t limit,index::IndexSchema schema);
   ShardId shard_;std::uint64_t epoch_;std::size_t limit_;std::uint64_t next_sequence_{1};std::vector<std::unique_ptr<OrderedReplica>> replicas_;std::vector<MutationRecord> log_;std::map<std::string,std::size_t,std::less<>> operation_indices_;mutable std::mutex mutex_;
 };
+
+class PersistentMutationLog {
+ public:
+  explicit PersistentMutationLog(std::filesystem::path path) : wal_(std::move(path)) {}
+  [[nodiscard]] std::expected<void, ReplicationError> append(const MutationRecord& record) const;
+  [[nodiscard]] std::expected<std::vector<MutationRecord>, ReplicationError> replay(
+      ShardId shard, std::uint64_t epoch,
+      const storage::WalLimits& limits = {}) const;
+  [[nodiscard]] std::expected<void, ReplicationError> reset() const;
+ private:
+  storage::WriteAheadLog wal_;
+};
+
+[[nodiscard]] std::expected<std::unique_ptr<OrderedReplica>, ReplicationError> recover_replica(
+    NodeId node, ShardId shard, std::uint64_t epoch, const PersistentMutationLog& log,
+    index::IndexSchema schema = index::IndexSchema::default_schema());
+[[nodiscard]] std::expected<void, ReplicationError> write_replica_snapshot(
+    const std::filesystem::path& path, const OrderedReplica& replica);
 }  // namespace dse::distributed
